@@ -145,7 +145,7 @@ public class UserController {
 
             // 返回结果
             Map<String, Object> result = new HashMap<>();
-            result.put("avatarUrl", "http://localhost:8080" + avatarUrl);
+            result.put("avatarUrl", avatarUrl);
             result.put("user", user);
 
             System.out.println("上传完成，返回结果");
@@ -197,6 +197,20 @@ public class UserController {
         } catch (Exception e) {
             e.printStackTrace();
             return Result.error("刷新 token 失败");
+        }
+    }
+
+    @GetMapping("/{id}")
+    public Result<?> getUserById(@PathVariable String id) {
+        try {
+            User user = userService.getUserById(id);
+            if (user == null) {
+                return Result.error("用户不存在");
+            }
+            return Result.success(user);
+        } catch (Exception e) {
+            e.printStackTrace();
+            return Result.error("获取用户信息失败");
         }
     }
 }
