@@ -66,7 +66,7 @@ public class FileUploadController {
 
             Map<String, Object> result = new HashMap<>();
             result.put("url", imageUrl);
-            result.put("fullUrl", "http://localhost:8080" + imageUrl);
+            result.put("fullUrl", imageUrl);
             result.put("fileName", fileName);
 
             return Result.success(result);
