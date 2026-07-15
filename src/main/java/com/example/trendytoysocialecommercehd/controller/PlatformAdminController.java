@@ -1,5 +1,6 @@
 package com.example.trendytoysocialecommercehd.controller;
 
+import com.example.trendytoysocialecommercehd.annotation.AuditLog;
 import com.example.trendytoysocialecommercehd.common.Result;
 import com.example.trendytoysocialecommercehd.dto.AdminLoginDTO;
 import com.example.trendytoysocialecommercehd.dto.AdminRegisterDTO;
@@ -22,6 +23,7 @@ public class PlatformAdminController {
     @Autowired
     private JwtUtil jwtUtil;
 
+    @AuditLog(module = "ADMIN", action = "LOGIN", description = "管理员登录")
     @PostMapping("/login")
     public Result<?> login(@RequestBody AdminLoginDTO loginDTO) {
         try {

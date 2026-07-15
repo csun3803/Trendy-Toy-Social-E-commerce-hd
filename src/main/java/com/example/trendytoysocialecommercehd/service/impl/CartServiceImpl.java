@@ -1,14 +1,21 @@
 package com.example.trendytoysocialecommercehd.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
-import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.example.trendytoysocialecommercehd.dto.AddToCartRequest;
 import com.example.trendytoysocialecommercehd.dto.CartSummaryDTO;
 import com.example.trendytoysocialecommercehd.dto.UpdateCartRequest;
 import com.example.trendytoysocialecommercehd.entity.CartItem;
+import com.example.trendytoysocialecommercehd.entity.Product;
+import com.example.trendytoysocialecommercehd.entity.SaleSeries;
+import com.example.trendytoysocialecommercehd.entity.Shop;
 import com.example.trendytoysocialecommercehd.mapper.CartMapper;
+import com.example.trendytoysocialecommercehd.mapper.ProductMapper;
+import com.example.trendytoysocialecommercehd.mapper.SaleSeriesMapper;
+import com.example.trendytoysocialecommercehd.mapper.ShopMapper;
 import com.example.trendytoysocialecommercehd.service.CartService;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -27,12 +34,65 @@ public class CartServiceImpl implements CartService {
     @Autowired
     private ObjectMapper objectMapper;
 
+    @Autowired
+    private ShopMapper shopMapper;
+
+    @Autowired
+    private SaleSeriesMapper saleSeriesMapper;
+
+    @Autowired
+    private ProductMapper productMapper;
+
     @Override
     public List<CartItem> getCartByUserId(String userId) {
         LambdaQueryWrapper<CartItem> queryWrapper = new LambdaQueryWrapper<>();
         queryWrapper.eq(CartItem::getUserId, userId)
                 .orderByDesc(CartItem::getAddedAt);
-        return cartMapper.selectList(queryWrapper);
+        List<CartItem> cartItems = cartMapper.selectList(queryWrapper);
+
+        // 补充 productSnapshot 中的 shopName、saleSeriesName、variantName
+        for (CartItem cartItem : cartItems) {
+            cartItem.setProductSnapshot(enhanceProductSnapshot(cartItem));
+        }
+
+        return cartItems;
+    }
+
+    // 增强 productSnapshot，添加 shopName、saleSeriesName、variantName
+    private String enhanceProductSnapshot(CartItem cartItem) {
+        try {
+            JsonNode snapshot = objectMapper.readTree(cartItem.getProductSnapshot());
+            ObjectNode objectNode = (ObjectNode) snapshot;
+
+            // 获取 shopName
+            if (cartItem.getShopId() != null && !objectNode.has("shopName")) {
+                Shop shop = shopMapper.selectById(cartItem.getShopId());
+                if (shop != null) {
+                    objectNode.put("shopName", shop.getShopName());
+                }
+            }
+
+            // 获取 saleSeriesName
+            if (cartItem.getSaleSeriesId() != null && !objectNode.has("saleSeriesName")) {
+                SaleSeries saleSeries = saleSeriesMapper.selectById(cartItem.getSaleSeriesId());
+                if (saleSeries != null) {
+                    objectNode.put("saleSeriesName", saleSeries.getSaleTitle());
+                }
+            }
+
+            // 获取 variantName - 通过 variant_id 查询 Product 表！
+            if (cartItem.getVariantId() != null && !objectNode.has("variantName")) {
+                Product product = productMapper.selectById(cartItem.getVariantId());
+                if (product != null && product.getName() != null) {
+                    objectNode.put("variantName", product.getName());
+                }
+            }
+
+            return objectMapper.writeValueAsString(objectNode);
+        } catch (Exception e) {
+            // 如果解析失败，返回原始数据
+            return cartItem.getProductSnapshot();
+        }
     }
 
     @Override
@@ -74,6 +134,10 @@ public class CartServiceImpl implements CartService {
         cartItem.setSourceId(request.getSourceId() != null ? request.getSourceId() : "");
 
         cartMapper.insert(cartItem);
+
+        // 补充 productSnapshot 信息
+        cartItem.setProductSnapshot(enhanceProductSnapshot(cartItem));
+
         return cartItem;
     }
 
@@ -130,7 +194,7 @@ public class CartServiceImpl implements CartService {
 
         for (CartItem item : items) {
             try {
-                com.fasterxml.jackson.databind.JsonNode snapshot = objectMapper.readTree(item.getProductSnapshot());
+                JsonNode snapshot = objectMapper.readTree(item.getProductSnapshot());
                 BigDecimal price = new BigDecimal(snapshot.get("price").asText());
                 BigDecimal itemTotal = price.multiply(new BigDecimal(item.getQuantity()));
                 totalAmount = totalAmount.add(itemTotal);

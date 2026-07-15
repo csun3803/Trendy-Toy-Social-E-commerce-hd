@@ -41,9 +41,6 @@ public class Order {
     @TableField("payment_method")
     private String paymentMethod;
 
-    @TableField("payment_status")
-    private String paymentStatus;
-
     @TableField("payment_time")
     private LocalDateTime paymentTime;
 
@@ -55,9 +52,6 @@ public class Order {
 
     @TableField("tracking_number")
     private String trackingNumber;
-
-    @TableField("shipping_status")
-    private String shippingStatus;
 
     @TableField("shipped_time")
     private LocalDateTime shippedTime;

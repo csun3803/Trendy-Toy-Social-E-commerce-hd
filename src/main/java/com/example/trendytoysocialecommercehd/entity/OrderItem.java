@@ -47,6 +47,15 @@ public class OrderItem {
     @TableField("item_seller_id")
     private String itemSellerId;
 
+    @TableField("product_name")
+    private String productName;
+
+    @TableField("product_image")
+    private String productImage;
+
+    @TableField("product_spec")
+    private String productSpec;
+
     @TableField(fill = FieldFill.INSERT)
     private LocalDateTime createTime;
 

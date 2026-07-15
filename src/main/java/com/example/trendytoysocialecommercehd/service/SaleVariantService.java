@@ -12,5 +12,7 @@ public interface SaleVariantService extends IService<SaleVariant> {
     List<SaleVariantDTO> getSaleVariantsWithNamesBySaleSeriesId(String saleSeriesId);
 
     SaleVariantDTO getSaleVariantWithName(String saleVariantId);
+
+    int deleteBySaleSeriesId(String saleSeriesId);
 }
 

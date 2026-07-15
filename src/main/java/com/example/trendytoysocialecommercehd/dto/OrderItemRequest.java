@@ -1,7 +1,6 @@
 package com.example.trendytoysocialecommercehd.dto;
 
 import lombok.Data;
-
 import java.math.BigDecimal;
 
 @Data
@@ -14,4 +13,8 @@ public class OrderItemRequest {
     private BigDecimal allocatedDiscount;
     private BigDecimal actualSubtotal;
     private String itemSellerId;
+    // 新增字段 - 商品快照信息
+    private String productName;
+    private String productImage;
+    private String productSpec;
 }

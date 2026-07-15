@@ -15,4 +15,7 @@ public class CreateOrderRequest {
     private String addressId;
     private String userRemark;
     private List<OrderItemRequest> items;
+
+    /** 用户优惠券ID（可选，下单时使用） */
+    private String userCouponId;
 }

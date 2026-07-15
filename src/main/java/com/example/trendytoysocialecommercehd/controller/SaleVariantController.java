@@ -53,10 +53,10 @@ public class SaleVariantController {
 
     @GetMapping("/{saleVariantId}")
     @Operation(summary = "获取销售款式详情", description = "根据ID获取销售款式详细信息")
-    public Result<SaleVariant> getSaleVariantById(
+    public Result<SaleVariantDTO> getSaleVariantById(
             @Parameter(description = "销售款式ID", required = true)
             @PathVariable String saleVariantId) {
-        SaleVariant saleVariant = saleVariantService.getById(saleVariantId);
+        SaleVariantDTO saleVariant = saleVariantService.getSaleVariantWithName(saleVariantId);
         if (saleVariant == null) {
             return Result.error("销售款式不存在");
         }

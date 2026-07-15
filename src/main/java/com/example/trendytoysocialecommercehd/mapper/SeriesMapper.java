@@ -68,4 +68,24 @@ public interface SeriesMapper extends BaseMapper<Series> {
             "FROM series s " +
             "WHERE s.series_id = #{seriesId}")
     Series selectSeriesWithSales(@Param("seriesId") String seriesId);
+
+    /**
+     * 按名称/主题/描述模糊查询系列摘要信息，供AI工具接口使用
+     * 返回字段: seriesId, seriesName, theme, coverImage, totalVariants,
+     *          regularVariants, hiddenVariants, minPrice, fullsetPrice,
+     *          isLimited, seriesHotness, status, description
+     */
+    @Select("SELECT s.series_id AS seriesId, s.series_name AS seriesName, s.theme, " +
+            "s.description, s.cover_image AS coverImage, " +
+            "s.regular_variants AS regularVariants, s.hidden_variants AS hiddenVariants, " +
+            "s.total_variants AS totalVariants, s.min_price AS minPrice, " +
+            "s.fullset_price AS fullsetPrice, s.is_limited AS isLimited, " +
+            "s.series_hotness AS seriesHotness, s.status " +
+            "FROM series s " +
+            "WHERE s.series_name LIKE CONCAT('%', #{seriesName}, '%') " +
+            "   OR s.theme LIKE CONCAT('%', #{seriesName}, '%') " +
+            "   OR s.description LIKE CONCAT('%', #{seriesName}, '%') " +
+            "ORDER BY s.series_hotness DESC " +
+            "LIMIT 10")
+    List<java.util.Map<String, Object>> selectSeriesInfoByName(@Param("seriesName") String seriesName);
 }

@@ -9,6 +9,7 @@ import com.example.trendytoysocialecommercehd.mapper.SaleVariantMapper;
 import com.example.trendytoysocialecommercehd.service.SaleVariantService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 import java.util.stream.Collectors;
@@ -24,7 +25,11 @@ public class SaleVariantServiceImpl extends ServiceImpl<SaleVariantMapper, SaleV
         LambdaQueryWrapper<SaleVariant> wrapper = new LambdaQueryWrapper<>();
         wrapper.eq(SaleVariant::getSaleSeriesId, saleSeriesId);
         wrapper.orderByDesc(SaleVariant::getCreatedAt);
-        return this.list(wrapper);
+        List<SaleVariant> list = this.list(wrapper);
+        for (SaleVariant variant : list) {
+            variant.setSalesCount(baseMapper.selectSalesCountByVariantId(variant.getSaleVariantId()));
+        }
+        return list;
     }
 
     @Override
@@ -48,6 +53,12 @@ public class SaleVariantServiceImpl extends ServiceImpl<SaleVariantMapper, SaleV
         return convertToDTO(saleVariant);
     }
 
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public int deleteBySaleSeriesId(String saleSeriesId) {
+        return baseMapper.deleteBySaleSeriesId(saleSeriesId);
+    }
+
     private SaleVariantDTO convertToDTO(SaleVariant saleVariant) {
         SaleVariantDTO dto = new SaleVariantDTO();
         dto.setSaleVariantId(saleVariant.getSaleVariantId());
@@ -63,7 +74,7 @@ public class SaleVariantServiceImpl extends ServiceImpl<SaleVariantMapper, SaleV
         dto.setLimitQuantity(saleVariant.getLimitQuantity());
         dto.setCustomDescription(saleVariant.getCustomDescription());
         dto.setCustomImages(saleVariant.getCustomImages());
-        dto.setSalesCount(saleVariant.getSalesCount());
+        dto.setSalesCount(baseMapper.selectSalesCountByVariantId(saleVariant.getSaleVariantId()));
         dto.setCreatedAt(saleVariant.getCreatedAt());
         dto.setUpdatedAt(saleVariant.getUpdatedAt());
 

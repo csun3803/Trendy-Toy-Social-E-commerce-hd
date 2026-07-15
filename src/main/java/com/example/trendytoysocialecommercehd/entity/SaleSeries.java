@@ -25,11 +25,21 @@ public class SaleSeries {
 
     private Integer variantCount;
 
+    @TableField(exist = false)
     private Integer totalSales;
 
-    @TableField(fill = FieldFill.INSERT)
+    @TableField(exist = false)
+    private Double minPrice;
+
+    @TableField(exist = false)
+    private Double maxPrice;
+
+    @TableField(value = "created_at", fill = FieldFill.INSERT)
     private Date createdAt;
 
-    @TableField(fill = FieldFill.INSERT_UPDATE)
+    @TableField(value = "updated_at", fill = FieldFill.INSERT_UPDATE)
     private Date updatedAt;
+
+    @TableField(exist = false)
+    private String shopName;
 }

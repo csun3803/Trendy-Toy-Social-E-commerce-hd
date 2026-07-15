@@ -1,6 +1,7 @@
 package com.example.trendytoysocialecommercehd.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.example.trendytoysocialecommercehd.dto.MerchantLoginDTO;
 import com.example.trendytoysocialecommercehd.dto.MerchantRegisterDTO;
@@ -40,6 +41,28 @@ public class ShopAdminService extends ServiceImpl<ShopAdminMapper, ShopAdmin> {
         return shopAdmin;
     }
 
+    /**
+     * 通过手机号注册商家账号
+     */
+    public ShopAdmin registerByPhone(String mobile, String password) {
+        LambdaQueryWrapper<ShopAdmin> wrapper = new LambdaQueryWrapper<>();
+        wrapper.eq(ShopAdmin::getAdminId, mobile);
+
+        if (this.count(wrapper) > 0) {
+            throw new RuntimeException("该手机号已注册");
+        }
+
+        ShopAdmin shopAdmin = new ShopAdmin();
+        shopAdmin.setAdminId(mobile);
+        shopAdmin.setPasswordHash(passwordEncoder.encode(password));
+        shopAdmin.setIsActive(1);
+        shopAdmin.setAuditStatus("待审核");
+        shopAdmin.setLoginCount(0);
+
+        this.save(shopAdmin);
+        return shopAdmin;
+    }
+
     public ShopAdmin register(MerchantRegisterDTO registerDTO) {
         if (!registerDTO.getPassword().equals(registerDTO.getConfirmPassword())) {
             throw new RuntimeException("两次密码输入不一致");
@@ -56,7 +79,7 @@ public class ShopAdminService extends ServiceImpl<ShopAdminMapper, ShopAdmin> {
         shopAdmin.setAdminId(registerDTO.getUsername());
         shopAdmin.setPasswordHash(passwordEncoder.encode(registerDTO.getPassword()));
         shopAdmin.setIsActive(1);
-        shopAdmin.setAuditStatus("已通过");
+        shopAdmin.setAuditStatus("待审核");
         shopAdmin.setLoginCount(0);
 
         this.save(shopAdmin);
@@ -65,5 +88,57 @@ public class ShopAdminService extends ServiceImpl<ShopAdminMapper, ShopAdmin> {
 
     public ShopAdmin getShopAdminById(String adminId) {
         return this.getById(adminId);
+    }
+
+    public Page<ShopAdmin> getShopAdminList(int page, int size, String auditStatus, String isActive) {
+        Page<ShopAdmin> pageObj = new Page<>(page, size);
+        LambdaQueryWrapper<ShopAdmin> wrapper = new LambdaQueryWrapper<>();
+
+        if (auditStatus != null && !auditStatus.isEmpty()) {
+            wrapper.eq(ShopAdmin::getAuditStatus, auditStatus);
+        }
+        if (isActive != null && !isActive.isEmpty()) {
+            wrapper.eq(ShopAdmin::getIsActive, Integer.parseInt(isActive));
+        }
+        wrapper.orderByDesc(ShopAdmin::getLastLoginTime);
+
+        return this.page(pageObj, wrapper);
+    }
+
+    public void createShopAdmin(ShopAdmin shopAdmin) {
+        shopAdmin.setPasswordHash(passwordEncoder.encode(shopAdmin.getPasswordHash()));
+        shopAdmin.setIsActive(shopAdmin.getIsActive() != null ? shopAdmin.getIsActive() : 1);
+        shopAdmin.setLoginCount(0);
+        shopAdmin.setAuditStatus("待审核");
+        this.save(shopAdmin);
+    }
+
+    public void updateShopAdmin(String adminId, ShopAdmin shopAdmin) {
+        ShopAdmin existing = this.getById(adminId);
+        if (existing == null) {
+            throw new RuntimeException("管理员不存在");
+        }
+
+        if (shopAdmin.getPasswordHash() != null && !shopAdmin.getPasswordHash().isEmpty()) {
+            shopAdmin.setPasswordHash(passwordEncoder.encode(shopAdmin.getPasswordHash()));
+        } else {
+            shopAdmin.setPasswordHash(existing.getPasswordHash());
+        }
+
+        shopAdmin.setAdminId(adminId);
+        this.updateById(shopAdmin);
+    }
+
+    public void deleteShopAdmin(String adminId) {
+        this.removeById(adminId);
+    }
+
+    public void updateShopId(String adminId, String shopId) {
+        ShopAdmin shopAdmin = this.getById(adminId);
+        if (shopAdmin == null) {
+            throw new RuntimeException("管理员不存在");
+        }
+        shopAdmin.setShopId(shopId);
+        this.updateById(shopAdmin);
     }
 }

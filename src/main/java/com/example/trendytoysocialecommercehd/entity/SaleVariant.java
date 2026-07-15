@@ -36,11 +36,12 @@ public class SaleVariant {
 
     private String customImages;
 
+    @TableField(exist = false)
     private Integer salesCount;
 
-    @TableField(fill = FieldFill.INSERT)
+    @TableField(value = "created_at", fill = FieldFill.INSERT)
     private Date createdAt;
 
-    @TableField(fill = FieldFill.INSERT_UPDATE)
+    @TableField(value = "updated_at", fill = FieldFill.INSERT_UPDATE)
     private Date updatedAt;
 }

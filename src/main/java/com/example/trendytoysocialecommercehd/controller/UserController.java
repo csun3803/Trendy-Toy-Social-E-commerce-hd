@@ -1,5 +1,6 @@
 package com.example.trendytoysocialecommercehd.controller;
 
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.example.trendytoysocialecommercehd.common.Result;
 import com.example.trendytoysocialecommercehd.dto.LoginDTO;
 import com.example.trendytoysocialecommercehd.dto.RegisterDTO;
@@ -47,7 +48,7 @@ public class UserController {
             result.put("user", user);
             result.put("accessToken", accessToken);
             result.put("refreshToken", refreshToken);
-            result.put("expiresIn", 1800); // 30分钟，单位秒
+            result.put("expiresIn", 1800);
 
             return Result.success(result);
         } catch (RuntimeException e) {
@@ -79,27 +80,16 @@ public class UserController {
     @PostMapping("/avatar")
     public Result<?> uploadAvatar(@RequestParam("avatar") MultipartFile file) {
         try {
-            System.out.println("开始上传头像...");
-            System.out.println("文件大小: " + file.getSize());
-            System.out.println("文件原始名称: " + file.getOriginalFilename());
-            System.out.println("文件类型: " + file.getContentType());
-
-            // 获取当前用户
             Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
             if (authentication == null) {
-                System.out.println("认证信息为空");
                 return Result.error("用户未登录");
             }
             String userId = authentication.getName();
-            System.out.println("用户ID: " + userId);
 
-            // 检查文件
             if (file.isEmpty()) {
-                System.out.println("文件为空");
                 return Result.error("请选择要上传的文件");
             }
 
-            // 生成唯一文件名
             String originalFilename = file.getOriginalFilename();
             String fileExtension = "";
             if (originalFilename != null && originalFilename.contains(".")) {
@@ -108,58 +98,35 @@ public class UserController {
                 fileExtension = ".jpg";
             }
             String fileName = UUID.randomUUID().toString() + fileExtension;
-            System.out.println("生成的文件名: " + fileName);
 
-            // 获取项目根目录
             String projectRootPath = System.getProperty("user.dir");
-            System.out.println("项目根目录: " + projectRootPath);
-
-            // 构建绝对路径
-            String uploadDirPath = projectRootPath + File.separator + "src" + File.separator + "main" +
-                    File.separator + "resources" + File.separator + "static" +
+            String uploadDirPath = projectRootPath + File.separator + "src" + File.separator +
+                    "main" + File.separator + "resources" + File.separator + "static" +
                     File.separator + "images" + File.separator + "avatar";
-            System.out.println("上传目录: " + uploadDirPath);
 
-            // 确保目录存在
             Path uploadDir = Paths.get(uploadDirPath);
             if (!Files.exists(uploadDir)) {
-                System.out.println("目录不存在，正在创建...");
                 Files.createDirectories(uploadDir);
-                System.out.println("目录创建成功");
             }
 
-            // 保存文件
             Path filePath = uploadDir.resolve(fileName);
-            System.out.println("保存路径: " + filePath.toAbsolutePath());
-
             Files.copy(file.getInputStream(), filePath);
-            System.out.println("文件保存成功");
 
-            // 构建文件路径
             String avatarUrl = "/images/avatar/" + fileName;
-            System.out.println("头像URL: " + avatarUrl);
-
-            // 更新用户头像
             User user = userService.updateAvatar(userId, avatarUrl);
-            System.out.println("用户头像更新成功");
 
-            // 返回结果
             Map<String, Object> result = new HashMap<>();
             result.put("avatarUrl", avatarUrl);
             result.put("user", user);
 
-            System.out.println("上传完成，返回结果");
             return Result.success(result);
         } catch (IOException e) {
-            System.out.println("IO异常:");
             e.printStackTrace();
             return Result.error("上传失败：" + e.getMessage());
         } catch (RuntimeException e) {
-            System.out.println("运行时异常:");
             e.printStackTrace();
             return Result.error(e.getMessage());
         } catch (Exception e) {
-            System.out.println("未知异常:");
             e.printStackTrace();
             return Result.error("上传失败，请重试");
         }
@@ -173,25 +140,22 @@ public class UserController {
                 return Result.error("缺少 refreshToken");
             }
 
-            // 验证 refreshToken
             if (!jwtUtil.validateToken(refreshToken)) {
                 return Result.error("无效的 refreshToken");
             }
 
-            // 从 refreshToken 中获取 userId
             String userId = jwtUtil.getUserIdFromToken(refreshToken);
             if (userId == null) {
                 return Result.error("无法获取用户信息");
             }
 
-            // 生成新的 accessToken 和 refreshToken
             String newAccessToken = jwtUtil.generateToken(userId);
             String newRefreshToken = jwtUtil.generateRefreshToken(userId);
 
             Map<String, Object> result = new HashMap<>();
             result.put("accessToken", newAccessToken);
             result.put("refreshToken", newRefreshToken);
-            result.put("expiresIn", 1800); // 30分钟，单位秒
+            result.put("expiresIn", 1800);
 
             return Result.success(result);
         } catch (Exception e) {
@@ -211,6 +175,91 @@ public class UserController {
         } catch (Exception e) {
             e.printStackTrace();
             return Result.error("获取用户信息失败");
+        }
+    }
+
+    @GetMapping("/info/current-with-stats")
+    public Result<?> getCurrentUserInfoWithStats() {
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        String userId = authentication.getName();
+
+        User user = userService.getUserWithStats(userId);
+        return Result.success(user);
+    }
+
+    // ==================== 管理员用户管理接口 ====================
+
+    @GetMapping("/admin/list")
+    public Result<?> getUserList(
+            @RequestParam(defaultValue = "1") int page,
+            @RequestParam(defaultValue = "10") int size,
+            @RequestParam(required = false) String accountStatus,
+            @RequestParam(required = false) String keyword) {
+        try {
+            Page<User> userPage = userService.getUserList(page, size, accountStatus, keyword);
+            return Result.success(userPage);
+        } catch (Exception e) {
+            e.printStackTrace();
+            return Result.error("获取用户列表失败");
+        }
+    }
+
+    @GetMapping("/admin/{userId}")
+    public Result<?> getUserDetail(@PathVariable String userId) {
+        try {
+            User user = userService.getUserById(userId);
+            if (user == null) {
+                return Result.error("用户不存在");
+            }
+            return Result.success(user);
+        } catch (Exception e) {
+            e.printStackTrace();
+            return Result.error("获取用户详情失败");
+        }
+    }
+
+    @PutMapping("/admin/{userId}")
+    public Result<?> updateUser(@PathVariable String userId, @RequestBody User user) {
+        try {
+            User updatedUser = userService.updateUser(userId, user);
+            return Result.success(updatedUser);
+        } catch (RuntimeException e) {
+            e.printStackTrace();
+            return Result.error(e.getMessage());
+        } catch (Exception e) {
+            e.printStackTrace();
+            return Result.error("更新用户失败");
+        }
+    }
+
+    @DeleteMapping("/admin/{userId}")
+    public Result<?> deleteUser(@PathVariable String userId) {
+        try {
+            userService.deleteUser(userId);
+            return Result.success(null);
+        } catch (RuntimeException e) {
+            e.printStackTrace();
+            return Result.error(e.getMessage());
+        } catch (Exception e) {
+            e.printStackTrace();
+            return Result.error("删除用户失败");
+        }
+    }
+
+    @PutMapping("/admin/{userId}/status")
+    public Result<?> updateUserStatus(
+            @PathVariable String userId,
+            @RequestBody Map<String, String> request) {
+        try {
+            String accountStatus = request.get("accountStatus");
+            User user = userService.updateUserStatus(userId, accountStatus);
+            return Result.success(user);
+        } catch (RuntimeException e) {
+            e.printStackTrace();
+            return Result.error(e.getMessage());
+        } catch (Exception e) {
+            e.printStackTrace();
+            return Result.error("更新用户状态失败");
         }
     }
 }

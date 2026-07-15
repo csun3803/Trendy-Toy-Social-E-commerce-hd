@@ -62,6 +62,9 @@ public class Product {
     @TableField("image_url")
     private String imageUrl;
 
+    @TableField("is_blind_box")
+    private Boolean blindBox;
+
     // 计算字段
     @TableField(exist = false)
     private String variantType; // regular/hidden

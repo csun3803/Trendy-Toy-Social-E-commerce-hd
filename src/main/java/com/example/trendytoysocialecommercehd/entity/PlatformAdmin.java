@@ -10,7 +10,7 @@ import java.util.Date;
 @Data
 @TableName("platform_admin")
 public class PlatformAdmin {
-    @TableId(type = IdType.ASSIGN_UUID)
+    @TableId(type = IdType.INPUT)
     private String adminId;
     private String employeeId;
     private String passwordHash;
