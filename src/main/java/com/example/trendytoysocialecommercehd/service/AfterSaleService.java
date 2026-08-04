@@ -20,8 +20,10 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Random;
 import java.util.UUID;
 
 @Service
@@ -44,6 +46,9 @@ public class AfterSaleService {
 
     // 商家审核超时时间（小时）：超时后自动同意
     private static final int MERCHANT_AUDIT_TIMEOUT_HOURS = 48;
+
+    // 退货超时时间（天）：超过后自动关闭
+    private static final int RETURN_TIMEOUT_DAYS = 7;
 
     @Transactional(rollbackFor = Exception.class)
     public AfterSale createAfterSale(CreateAfterSaleRequest request, String userId) {
@@ -82,7 +87,12 @@ public class AfterSaleService {
         afterSale.setAfterSaleStatus("PENDING");
         afterSale.setReason(request.getReason());
         afterSale.setDescription(request.getDescription());
+        afterSale.setEvidenceImages(request.getEvidenceImages());
         afterSale.setRefundAmount(request.getRefundAmount());
+        // 生成售后单号：AS + 时间戳 + 4位随机数
+        String afterSaleNo = "AS" + LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMddHHmmss"))
+                + String.format("%04d", new Random().nextInt(10000));
+        afterSale.setAfterSaleNo(afterSaleNo);
         // 设置商家超时自动同意的截止时间
         afterSale.setTimeoutAutoApproveTime(LocalDateTime.now().plusHours(MERCHANT_AUDIT_TIMEOUT_HOURS));
         afterSale.setCreateTime(LocalDateTime.now());
@@ -117,6 +127,37 @@ public class AfterSaleService {
         afterSale.setAfterSaleStatus("APPROVED");
         afterSale.setAuditTime(LocalDateTime.now());
         afterSale.setUpdateTime(LocalDateTime.now());
+
+        // 如果是退货类型，设置退货截止时间（7天）并自动填充商家退货地址
+        if ("RETURN".equals(afterSale.getAfterSaleType())) {
+            afterSale.setReturnDeadline(LocalDateTime.now().plusDays(RETURN_TIMEOUT_DAYS));
+            
+            // 自动从商家信息获取退货地址
+            Shop shop = shopMapper.selectById(afterSale.getSellerId());
+            if (shop != null && shop.getReturnAddressDetail() != null) {
+                // 拼接完整退货地址
+                StringBuilder addressBuilder = new StringBuilder();
+                if (shop.getReturnAddressContact() != null) {
+                    addressBuilder.append("收货人：").append(shop.getReturnAddressContact()).append("\n");
+                }
+                if (shop.getReturnAddressPhone() != null) {
+                    addressBuilder.append("电话：").append(shop.getReturnAddressPhone()).append("\n");
+                }
+                if (shop.getReturnAddressProvince() != null) {
+                    addressBuilder.append(shop.getReturnAddressProvince());
+                }
+                if (shop.getReturnAddressCity() != null) {
+                    addressBuilder.append(shop.getReturnAddressCity());
+                }
+                if (shop.getReturnAddressDistrict() != null) {
+                    addressBuilder.append(shop.getReturnAddressDistrict());
+                }
+                if (shop.getReturnAddressDetail() != null) {
+                    addressBuilder.append(shop.getReturnAddressDetail());
+                }
+                afterSale.setReturnAddress(addressBuilder.toString());
+            }
+        }
 
         afterSaleMapper.updateById(afterSale);
 
@@ -338,6 +379,68 @@ public class AfterSaleService {
         }
     }
 
+    /**
+     * 定时任务：退货超时未寄回自动关闭
+     * 每 10 分钟执行一次
+     */
+    @Scheduled(fixedRate = 10 * 60 * 1000)
+    @Transactional(rollbackFor = Exception.class)
+    public void processReturnTimeout() {
+        LambdaQueryWrapper<AfterSale> wrapper = new LambdaQueryWrapper<>();
+        wrapper.eq(AfterSale::getAfterSaleStatus, "APPROVED");
+        wrapper.eq(AfterSale::getAfterSaleType, "RETURN");
+        wrapper.isNotNull(AfterSale::getReturnDeadline);
+        wrapper.le(AfterSale::getReturnDeadline, LocalDateTime.now());
+
+        List<AfterSale> timeoutList = afterSaleMapper.selectList(wrapper);
+        for (AfterSale afterSale : timeoutList) {
+            try {
+                // 仅关闭未提交物流的售后
+                if (afterSale.getReturnTrackingNumber() == null || afterSale.getReturnTrackingNumber().isEmpty()) {
+                    closeAfterSaleInternal(afterSale.getAfterSaleId());
+                }
+            } catch (Exception e) {
+                System.err.println("自动关闭退货超时售后失败: " + afterSale.getAfterSaleId() + ", 原因: " + e.getMessage());
+            }
+        }
+    }
+
+    /**
+     * 用户取消售后申请（仅PENDING状态可取消）
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public AfterSale cancelAfterSale(String afterSaleId) {
+        AfterSale afterSale = afterSaleMapper.selectById(afterSaleId);
+        if (afterSale == null) {
+            throw new RuntimeException("售后申请不存在");
+        }
+
+        if (!"PENDING".equals(afterSale.getAfterSaleStatus())) {
+            throw new RuntimeException("只有等待商家处理的售后才能取消");
+        }
+
+        return closeAfterSaleInternal(afterSaleId);
+    }
+
+    /**
+     * 内部方法：关闭售后申请
+     */
+    private AfterSale closeAfterSaleInternal(String afterSaleId) {
+        AfterSale afterSale = afterSaleMapper.selectById(afterSaleId);
+        if (afterSale == null) {
+            throw new RuntimeException("售后申请不存在");
+        }
+
+        afterSale.setAfterSaleStatus("CLOSED");
+        afterSale.setUpdateTime(LocalDateTime.now());
+        afterSaleMapper.updateById(afterSale);
+
+        // 更新订单和订单项状态
+        updateOrderAndItemStatus(afterSale.getOrderId(), afterSale.getOrderItemId());
+
+        return afterSale;
+    }
+
     private AfterSale completeAfterSaleInternal(String afterSaleId) {
         AfterSale afterSale = afterSaleMapper.selectById(afterSaleId);
         if (afterSale == null) {
@@ -467,6 +570,21 @@ public class AfterSaleService {
     public List<AfterSaleInfoDTO> getAfterSalesBySellerId(String sellerId) {
         LambdaQueryWrapper<AfterSale> wrapper = new LambdaQueryWrapper<>();
         wrapper.eq(AfterSale::getSellerId, sellerId);
+        wrapper.orderByDesc(AfterSale::getCreateTime);
+
+        List<AfterSale> afterSales = afterSaleMapper.selectList(wrapper);
+        return convertToDTOList(afterSales);
+    }
+
+    /**
+     * 商家端售后列表查询（支持状态过滤）
+     */
+    public List<AfterSaleInfoDTO> getAfterSalesBySellerId(String sellerId, String status) {
+        LambdaQueryWrapper<AfterSale> wrapper = new LambdaQueryWrapper<>();
+        wrapper.eq(AfterSale::getSellerId, sellerId);
+        if (status != null && !status.isEmpty() && !"ALL".equals(status)) {
+            wrapper.eq(AfterSale::getAfterSaleStatus, status);
+        }
         wrapper.orderByDesc(AfterSale::getCreateTime);
 
         List<AfterSale> afterSales = afterSaleMapper.selectList(wrapper);

@@ -62,6 +62,9 @@ public class Order {
     @TableField("logistics_tracking")
     private String logisticsTracking;
 
+    @TableField("logistics_status")
+    private String logisticsStatus;
+
     @TableField("estimated_delivery")
     private LocalDateTime estimatedDelivery;
 

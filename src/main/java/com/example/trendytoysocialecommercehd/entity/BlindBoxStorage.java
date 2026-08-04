@@ -26,8 +26,6 @@ public class BlindBoxStorage {
 
     private Integer slotNo;
 
-    private String saleVariantId;
-
     private String variantId;
 
     private String variantName;

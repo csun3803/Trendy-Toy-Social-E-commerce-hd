@@ -5,7 +5,7 @@ import com.example.trendytoysocialecommercehd.common.Result;
 import com.example.trendytoysocialecommercehd.dto.BlindBoxMachineStatisticsDTO;
 import com.example.trendytoysocialecommercehd.entity.BlindBoxDrawRecord;
 import com.example.trendytoysocialecommercehd.entity.BlindBoxMachine;
-import com.example.trendytoysocialecommercehd.entity.BlindBoxMachineVariant;
+import com.example.trendytoysocialecommercehd.entity.Product;
 import com.example.trendytoysocialecommercehd.service.BlindBoxMachineService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -73,13 +73,13 @@ public class BlindBoxMachineAdminController {
     }
 
     @GetMapping("/{machineId}/variants")
-    @Operation(summary = "管理员端-查看抽盒机款式配置")
-    public Result<List<BlindBoxMachineVariant>> variants(@PathVariable String machineId) {
+    @Operation(summary = "管理员端-查看抽盒机款式列表（图鉴款式）")
+    public Result<List<Product>> variants(@PathVariable String machineId) {
         try {
-            List<BlindBoxMachineVariant> variants = blindBoxMachineService.getMachineVariantsConfig(machineId);
+            List<Product> variants = blindBoxMachineService.getMachineVariants(machineId);
             return Result.success(variants);
         } catch (Exception e) {
-            return Result.error("获取款式配置失败: " + e.getMessage());
+            return Result.error("获取款式列表失败: " + e.getMessage());
         }
     }
 
@@ -169,6 +169,27 @@ public class BlindBoxMachineAdminController {
             return Result.success(machine);
         } catch (Exception e) {
             return Result.error("强制下架失败: " + e.getMessage());
+        }
+    }
+
+    @AuditLog(module = "BLIND_BOX", action = "STATUS", description = "管理员启用/禁用抽盒机")
+    @PutMapping("/{machineId}/status")
+    @Operation(summary = "管理员端-启用/禁用抽盒机")
+    public Result<BlindBoxMachine> updateStatus(
+            @PathVariable String machineId,
+            @RequestBody Map<String, String> body) {
+        try {
+            String status = body.get("machineStatus");
+            if (status == null || status.trim().isEmpty()) {
+                status = body.get("status");
+            }
+            if (!"ACTIVE".equals(status) && !"INACTIVE".equals(status)) {
+                return Result.error("管理员只能设置启用或禁用状态");
+            }
+            BlindBoxMachine machine = blindBoxMachineService.adminUpdateMachineStatus(machineId, status);
+            return Result.success(machine);
+        } catch (Exception e) {
+            return Result.error("操作失败: " + e.getMessage());
         }
     }
 }

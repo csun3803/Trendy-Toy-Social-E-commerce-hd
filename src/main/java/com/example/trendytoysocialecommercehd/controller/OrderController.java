@@ -141,6 +141,18 @@ public class OrderController {
         }
     }
 
+    @PostMapping("/{orderId}/logistics-status")
+    public Result<Order> updateLogisticsStatus(
+            @PathVariable String orderId,
+            @RequestBody LogisticsStatusRequest request) {
+        try {
+            Order order = orderService.updateLogisticsStatus(orderId, request.getStatus());
+            return Result.success(order);
+        } catch (Exception e) {
+            return Result.error("更新物流状态失败: " + e.getMessage());
+        }
+    }
+
     @PostMapping("/{orderId}/complete")
     public Result<Order> completeOrder(@PathVariable String orderId) {
         try {
@@ -172,6 +184,11 @@ public class OrderController {
     public static class ShipRequest {
         private String logisticsCompany;
         private String trackingNumber;
+    }
+
+    @Data
+    public static class LogisticsStatusRequest {
+        private String status;
     }
 
     @GetMapping("/status-count")

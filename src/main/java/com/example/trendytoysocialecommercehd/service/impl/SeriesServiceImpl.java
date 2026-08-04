@@ -21,11 +21,16 @@ public class SeriesServiceImpl extends ServiceImpl<SeriesMapper, Series> impleme
     private ProductMapper productMapper;
     @Override
     public Page<Series> getSeriesPage(Integer page, Integer size, String keyword) {
+        return getSeriesPage(page, size, keyword, null);
+    }
+
+    @Override
+    public Page<Series> getSeriesPage(Integer page, Integer size, String keyword, String ipAlbumId) {
         // 创建Page对象
         Page<Series> pageParam = new Page<>(page, size);
 
         // 调用Mapper方法，返回IPage
-        IPage<Series> iPage = baseMapper.selectSeriesPageWithSales(pageParam, keyword);
+        IPage<Series> iPage = baseMapper.selectSeriesPageWithSales(pageParam, keyword, ipAlbumId);
 
         // 将IPage转换为Page
         Page<Series> resultPage = new Page<>();
@@ -73,5 +78,13 @@ public class SeriesServiceImpl extends ServiceImpl<SeriesMapper, Series> impleme
         }
 
         return false;
+    }
+
+    @Override
+    public int getActualVariantCount(String seriesId) {
+        return Math.toIntExact(productMapper.selectCount(
+            new com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<com.example.trendytoysocialecommercehd.entity.Product>()
+                .eq("series_id", seriesId)
+        ));
     }
 }

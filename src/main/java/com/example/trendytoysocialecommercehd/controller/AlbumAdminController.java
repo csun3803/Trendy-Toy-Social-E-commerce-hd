@@ -75,9 +75,13 @@ public class AlbumAdminController {
         List<Series> seriesList = seriesService.list(wrapper);
 
         int seriesCount = seriesList.size();
-        int totalVariants = seriesList.stream()
-                .mapToInt(s -> s.getTotalVariants() != null ? s.getTotalVariants() : 0)
-                .sum();
+        // 实时统计款式总数（从product表）
+        long totalVariants = 0;
+        for (Series s : seriesList) {
+            QueryWrapper<Product> pWrapper = new QueryWrapper<>();
+            pWrapper.eq("series_id", s.getSeriesId());
+            totalVariants += productMapper.selectCount(pWrapper);
+        }
 
         Map<String, Object> result = new HashMap<>();
         result.put("albumId", album.getAlbumId());
@@ -107,11 +111,22 @@ public class AlbumAdminController {
             Map<String, Object> map = new HashMap<>();
             map.put("seriesId", series.getSeriesId());
             map.put("seriesName", series.getSeriesName());
-            map.put("totalVariants", series.getTotalVariants());
-            map.put("hiddenVariants", series.getHiddenVariants());
-            map.put("regularVariants", series.getRegularVariants());
             map.put("coverImage", series.getCoverImage());
             map.put("status", series.getStatus());
+            // 实时统计款式数量
+            QueryWrapper<Product> allWrapper = new QueryWrapper<>();
+            allWrapper.eq("series_id", series.getSeriesId());
+            long totalCount = productMapper.selectCount(allWrapper);
+            QueryWrapper<Product> regularWrapper = new QueryWrapper<>();
+            regularWrapper.eq("series_id", series.getSeriesId()).eq("is_hidden_variant", 0);
+            long regularCount = productMapper.selectCount(regularWrapper);
+            QueryWrapper<Product> hiddenWrapper = new QueryWrapper<>();
+            hiddenWrapper.eq("series_id", series.getSeriesId()).eq("is_hidden_variant", 1);
+            long hiddenCount = productMapper.selectCount(hiddenWrapper);
+            map.put("totalVariants", totalCount);
+            map.put("regularVariants", regularCount);
+            map.put("hiddenVariants", hiddenCount);
+            map.put("actualVariantCount", totalCount);
             return map;
         }).toList();
 
@@ -206,6 +221,7 @@ public class AlbumAdminController {
             Map<String, Object> map = new HashMap<>();
             map.put("productId", p.getProductId());
             map.put("productName", p.getProductName());
+            map.put("description", p.getDescription());
             map.put("price", p.getPrice());
             map.put("stock", p.getStock());
             map.put("variantType", p.getVariantType());
@@ -236,9 +252,19 @@ public class AlbumAdminController {
         result.put("theme", series.getTheme());
         result.put("description", series.getDescription());
         result.put("coverImage", series.getCoverImage());
-        result.put("regularVariants", series.getRegularVariants());
-        result.put("hiddenVariants", series.getHiddenVariants());
-        result.put("totalVariants", series.getTotalVariants());
+        // 实时统计款式数量
+        QueryWrapper<Product> allWrapper = new QueryWrapper<>();
+        allWrapper.eq("series_id", seriesId);
+        long totalCount = productMapper.selectCount(allWrapper);
+        QueryWrapper<Product> regularWrapper = new QueryWrapper<>();
+        regularWrapper.eq("series_id", seriesId).eq("is_hidden_variant", 0);
+        long regularCount = productMapper.selectCount(regularWrapper);
+        QueryWrapper<Product> hiddenWrapper = new QueryWrapper<>();
+        hiddenWrapper.eq("series_id", seriesId).eq("is_hidden_variant", 1);
+        long hiddenCount = productMapper.selectCount(hiddenWrapper);
+        result.put("regularVariants", regularCount);
+        result.put("hiddenVariants", hiddenCount);
+        result.put("totalVariants", totalCount);
         result.put("isLimited", series.getIsLimited());
         result.put("status", series.getStatus());
         result.put("minPrice", series.getMinPrice());

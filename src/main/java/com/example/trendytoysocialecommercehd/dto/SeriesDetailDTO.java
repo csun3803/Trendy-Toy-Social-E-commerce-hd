@@ -30,6 +30,7 @@ public class SeriesDetailDTO {
     private LocalDate startDate;
     private LocalDate endDate;
     private Integer salesCount;
+    private Integer actualVariantCount;
     private Date createTime;
     private Date updateTime;
 
@@ -48,7 +49,8 @@ public class SeriesDetailDTO {
         private BigDecimal price;
         private Integer stock;
         private String description;
-        private String productImages; // JSON字符串
+        private String imageUrl; // 单张图片
+        private String productImages; // JSON字符串（多张图片）
         private Integer sortOrder;
         private String status;
 

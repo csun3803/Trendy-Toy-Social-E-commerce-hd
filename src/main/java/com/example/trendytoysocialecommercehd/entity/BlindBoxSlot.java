@@ -30,11 +30,17 @@ public class BlindBoxSlot {
     /** 状态: AVAILABLE/RESERVED/SOLD/SELECTED */
     private String status;
 
-    /** 预分配的销售款式ID(选盒后揭晓) */
-    private String saleVariantId;
-
-    /** 预分配的原始产品ID */
+    /** 预分配的原始产品ID（图鉴款式ID） */
     private String variantId;
+
+    /** 缓存的款式名称（创建盒子时从图鉴复制） */
+    private String variantName;
+
+    /** 缓存的款式图片（创建盒子时从图鉴复制） */
+    private String variantImage;
+
+    /** 款式类型: regular常规/hidden隐藏 */
+    private String variantType;
 
     /** 是否为隐藏款(揭晓后填入) */
     private Boolean isHidden;
@@ -50,12 +56,4 @@ public class BlindBoxSlot {
 
     @TableField(value = "updated_at", fill = FieldFill.INSERT_UPDATE)
     private Date updatedAt;
-
-    /** 非数据库字段：款式名称 */
-    @TableField(exist = false)
-    private String variantName;
-
-    /** 非数据库字段：款式图片 */
-    @TableField(exist = false)
-    private String variantImage;
 }

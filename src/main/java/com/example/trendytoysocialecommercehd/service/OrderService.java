@@ -46,7 +46,16 @@ public class OrderService {
     private ShopMapper shopMapper;
 
     @Autowired
+    private UserMapper userMapper;
+
+    @Autowired
     private CouponService couponService;
+
+    @Autowired
+    private ShippingTemplateService shippingTemplateService;
+
+    @Autowired
+    private UserAddressMapper userAddressMapper;
 
     @Transactional(rollbackFor = Exception.class)
     public Order createOrder(CreateOrderRequest request) {
@@ -69,7 +78,30 @@ public class OrderService {
         order.setOrderNo(orderNo);
         order.setUserId(request.getUserId());
         order.setAmount(request.getAmount());
-        order.setShippingFee(request.getShippingFee() != null ? request.getShippingFee() : BigDecimal.ZERO);
+        // 运费：前端传了非零值则使用前端值，否则自动计算
+        BigDecimal shippingFee = request.getShippingFee() != null ? request.getShippingFee() : BigDecimal.ZERO;
+        if (shippingFee.compareTo(BigDecimal.ZERO) == 0 && request.getAddressId() != null) {
+            try {
+                UserAddress address = userAddressMapper.selectById(request.getAddressId());
+                if (address != null && address.getProvince() != null) {
+                    // 从订单项中获取shopId（itemSellerId即为shopId）
+                    String shopId = null;
+                    if (request.getItems() != null && !request.getItems().isEmpty()) {
+                        shopId = request.getItems().get(0).getItemSellerId();
+                    }
+                    if (shopId != null) {
+                        BigDecimal calculatedFee = shippingTemplateService.calculateShippingFee(
+                            shopId, address.getProvince(), request.getAmount());
+                        if (calculatedFee != null && calculatedFee.compareTo(BigDecimal.ZERO) > 0) {
+                            shippingFee = calculatedFee;
+                        }
+                    }
+                }
+            } catch (Exception e) {
+                System.err.println("自动计算运费失败: " + e.getMessage());
+            }
+        }
+        order.setShippingFee(shippingFee);
         BigDecimal totalDiscount = (request.getTotalDiscount() != null ? request.getTotalDiscount() : BigDecimal.ZERO).add(couponDiscount);
         order.setTotalDiscount(totalDiscount);
         BigDecimal actualAmount = request.getActualAmount().subtract(couponDiscount);
@@ -121,7 +153,15 @@ public class OrderService {
             if (orderItem.getProductName() == null) {
                 SaleVariant saleVariant = saleVariantMapper.selectById(itemRequest.getProductId());
                 if (saleVariant != null) {
-                    orderItem.setProductName(saleVariant.getSkuCode());
+                    // productName = 销售系列标题
+                    String seriesTitle = null;
+                    if (saleVariant.getSaleSeriesId() != null) {
+                        SaleSeries saleSeries = saleSeriesMapper.selectById(saleVariant.getSaleSeriesId());
+                        if (saleSeries != null && saleSeries.getSaleTitle() != null) {
+                            seriesTitle = saleSeries.getSaleTitle();
+                        }
+                    }
+                    orderItem.setProductName(seriesTitle != null ? seriesTitle : saleVariant.getSkuCode());
 
                     if (saleVariant.getCustomImages() != null && !saleVariant.getCustomImages().isEmpty()) {
                         try {
@@ -139,24 +179,8 @@ public class OrderService {
                         }
                     }
 
-                    StringBuilder spec = new StringBuilder();
-                    if (saleVariant.getSaleSeriesId() != null) {
-                        SaleSeries saleSeries = saleSeriesMapper.selectById(saleVariant.getSaleSeriesId());
-                        if (saleSeries != null && saleSeries.getSaleTitle() != null) {
-                            spec.append(saleSeries.getSaleTitle());
-                        }
-                    }
-                    if (saleVariant.getCustomDescription() != null) {
-                        if (spec.length() > 0) {
-                            spec.append(" - ");
-                        }
-                        String desc = saleVariant.getCustomDescription();
-                        if (desc.length() > 20) {
-                            desc = desc.substring(0, 20) + "...";
-                        }
-                        spec.append(desc);
-                    }
-                    orderItem.setProductSpec(spec.toString());
+                    // productSpec = 销售款式（SKU编码）
+                    orderItem.setProductSpec(saleVariant.getSkuCode());
                 }
             }
 
@@ -234,7 +258,23 @@ public class OrderService {
             order.setOrderNo(orderNo);
             order.setUserId(request.getUserId());
             order.setAmount(shopOrder.getAmount());
-            order.setShippingFee(shopOrder.getShippingFee() != null ? shopOrder.getShippingFee() : BigDecimal.ZERO);
+            // 运费：前端传了非零值则使用前端值，否则自动计算
+            BigDecimal shopShippingFee = shopOrder.getShippingFee() != null ? shopOrder.getShippingFee() : BigDecimal.ZERO;
+            if (shopShippingFee.compareTo(BigDecimal.ZERO) == 0 && request.getAddressId() != null) {
+                try {
+                    UserAddress address = userAddressMapper.selectById(request.getAddressId());
+                    if (address != null && address.getProvince() != null && shopOrder.getShopId() != null) {
+                        BigDecimal calculatedFee = shippingTemplateService.calculateShippingFee(
+                            shopOrder.getShopId(), address.getProvince(), shopOrder.getAmount());
+                        if (calculatedFee != null && calculatedFee.compareTo(BigDecimal.ZERO) > 0) {
+                            shopShippingFee = calculatedFee;
+                        }
+                    }
+                } catch (Exception e) {
+                    System.err.println("自动计算运费失败: " + e.getMessage());
+                }
+            }
+            order.setShippingFee(shopShippingFee);
             BigDecimal totalDiscount = (shopOrder.getTotalDiscount() != null ? shopOrder.getTotalDiscount() : BigDecimal.ZERO).add(shopCouponDiscount);
             order.setTotalDiscount(totalDiscount);
             BigDecimal actualAmount = shopOrder.getActualAmount().subtract(shopCouponDiscount);
@@ -287,7 +327,15 @@ public class OrderService {
                 if (orderItem.getProductName() == null) {
                     SaleVariant saleVariant = saleVariantMapper.selectById(itemRequest.getProductId());
                     if (saleVariant != null) {
-                        orderItem.setProductName(saleVariant.getSkuCode());
+                        // productName = 销售系列标题
+                        String seriesTitle = null;
+                        if (saleVariant.getSaleSeriesId() != null) {
+                            SaleSeries saleSeries = saleSeriesMapper.selectById(saleVariant.getSaleSeriesId());
+                            if (saleSeries != null && saleSeries.getSaleTitle() != null) {
+                                seriesTitle = saleSeries.getSaleTitle();
+                            }
+                        }
+                        orderItem.setProductName(seriesTitle != null ? seriesTitle : saleVariant.getSkuCode());
 
                         if (saleVariant.getCustomImages() != null && !saleVariant.getCustomImages().isEmpty()) {
                             try {
@@ -305,20 +353,8 @@ public class OrderService {
                             }
                         }
 
-                        StringBuilder spec = new StringBuilder();
-                        if (saleVariant.getSaleSeriesId() != null) {
-                            SaleSeries saleSeries = saleSeriesMapper.selectById(saleVariant.getSaleSeriesId());
-                            if (saleSeries != null && saleSeries.getSaleTitle() != null) {
-                                spec.append(saleSeries.getSaleTitle());
-                            }
-                        }
-                        if (saleVariant.getCustomDescription() != null) {
-                            if (spec.length() > 0) spec.append(" - ");
-                            String desc = saleVariant.getCustomDescription();
-                            if (desc.length() > 20) desc = desc.substring(0, 20) + "...";
-                            spec.append(desc);
-                        }
-                        orderItem.setProductSpec(spec.toString());
+                        // productSpec = 销售款式（SKU编码）
+                        orderItem.setProductSpec(saleVariant.getSkuCode());
                     }
                 }
 
@@ -416,7 +452,15 @@ public class OrderService {
                     SaleVariant saleVariant = saleVariantMapper.selectById(item.getProductId());
                     if (saleVariant != null) {
                         if (item.getProductName() == null) {
-                            item.setProductName(saleVariant.getSkuCode());
+                            // productName = 销售系列标题
+                            String seriesTitle = null;
+                            if (saleVariant.getSaleSeriesId() != null) {
+                                SaleSeries saleSeries = saleSeriesMapper.selectById(saleVariant.getSaleSeriesId());
+                                if (saleSeries != null && saleSeries.getSaleTitle() != null) {
+                                    seriesTitle = saleSeries.getSaleTitle();
+                                }
+                            }
+                            item.setProductName(seriesTitle != null ? seriesTitle : saleVariant.getSkuCode());
                         }
                         if (item.getProductImage() == null && saleVariant.getCustomImages() != null) {
                             try {
@@ -434,20 +478,8 @@ public class OrderService {
                             }
                         }
                         if (item.getProductSpec() == null) {
-                            StringBuilder spec = new StringBuilder();
-                            if (saleVariant.getSaleSeriesId() != null) {
-                                SaleSeries saleSeries = saleSeriesMapper.selectById(saleVariant.getSaleSeriesId());
-                                if (saleSeries != null && saleSeries.getSaleTitle() != null) {
-                                    spec.append(saleSeries.getSaleTitle());
-                                }
-                            }
-                            if (saleVariant.getCustomDescription() != null) {
-                                if (spec.length() > 0) spec.append(" - ");
-                                String desc = saleVariant.getCustomDescription();
-                                if (desc.length() > 20) desc = desc.substring(0, 20) + "...";
-                                spec.append(desc);
-                            }
-                            item.setProductSpec(spec.toString());
+                            // productSpec = 销售款式（SKU编码）
+                            item.setProductSpec(saleVariant.getSkuCode());
                         }
                     }
                 }
@@ -457,6 +489,7 @@ public class OrderService {
                 OrderItem firstItem = items.get(0);
                 String shopId = firstItem.getItemSellerId();
                 if (shopId != null) {
+                    dto.setShopId(shopId);
                     Shop shop = shopMapper.selectById(shopId);
                     if (shop != null) {
                         dto.setShopName(shop.getShopName());
@@ -466,6 +499,14 @@ public class OrderService {
 
             if (dto.getShopName() == null) {
                 dto.setShopName("店铺");
+            }
+
+            // 填充买家昵称
+            if (order.getUserId() != null) {
+                User buyer = userMapper.selectById(order.getUserId());
+                if (buyer != null && buyer.getUsername() != null) {
+                    dto.setBuyerNickname(buyer.getUsername());
+                }
             }
 
             dto.setItems(items);
@@ -497,7 +538,15 @@ public class OrderService {
                 SaleVariant saleVariant = saleVariantMapper.selectById(item.getProductId());
                 if (saleVariant != null) {
                     if (item.getProductName() == null) {
-                        item.setProductName(saleVariant.getSkuCode());
+                        // productName = 销售系列标题
+                        String seriesTitle = null;
+                        if (saleVariant.getSaleSeriesId() != null) {
+                            SaleSeries saleSeries = saleSeriesMapper.selectById(saleVariant.getSaleSeriesId());
+                            if (saleSeries != null && saleSeries.getSaleTitle() != null) {
+                                seriesTitle = saleSeries.getSaleTitle();
+                            }
+                        }
+                        item.setProductName(seriesTitle != null ? seriesTitle : saleVariant.getSkuCode());
                     }
                     if (item.getProductImage() == null && saleVariant.getCustomImages() != null) {
                         try {
@@ -515,26 +564,30 @@ public class OrderService {
                         }
                     }
                     if (item.getProductSpec() == null) {
-                        StringBuilder spec = new StringBuilder();
-                        if (saleVariant.getSaleSeriesId() != null) {
-                            SaleSeries saleSeries = saleSeriesMapper.selectById(saleVariant.getSaleSeriesId());
-                            if (saleSeries != null && saleSeries.getSaleTitle() != null) {
-                                spec.append(saleSeries.getSaleTitle());
-                            }
-                        }
-                        if (saleVariant.getCustomDescription() != null) {
-                            if (spec.length() > 0) spec.append(" - ");
-                            String desc = saleVariant.getCustomDescription();
-                            if (desc.length() > 20) desc = desc.substring(0, 20) + "...";
-                            spec.append(desc);
-                        }
-                        item.setProductSpec(spec.toString());
+                        // productSpec = 销售款式（SKU编码）
+                        item.setProductSpec(saleVariant.getSkuCode());
                     }
                 }
             }
         }
 
         orderDetail.setOrderItems(orderItems);
+
+        // 填充店铺信息
+        if (!orderItems.isEmpty()) {
+            OrderItem firstItem = orderItems.get(0);
+            String shopId = firstItem.getItemSellerId();
+            if (shopId != null) {
+                orderDetail.setShopId(shopId);
+                Shop shop = shopMapper.selectById(shopId);
+                if (shop != null) {
+                    orderDetail.setShopName(shop.getShopName());
+                }
+            }
+        }
+        if (orderDetail.getShopName() == null) {
+            orderDetail.setShopName("店铺");
+        }
 
         return orderDetail;
     }
@@ -584,7 +637,15 @@ public class OrderService {
                     SaleVariant saleVariant = saleVariantMapper.selectById(item.getProductId());
                     if (saleVariant != null) {
                         if (item.getProductName() == null) {
-                            item.setProductName(saleVariant.getSkuCode());
+                            // productName = 销售系列标题
+                            String seriesTitle = null;
+                            if (saleVariant.getSaleSeriesId() != null) {
+                                SaleSeries saleSeries = saleSeriesMapper.selectById(saleVariant.getSaleSeriesId());
+                                if (saleSeries != null && saleSeries.getSaleTitle() != null) {
+                                    seriesTitle = saleSeries.getSaleTitle();
+                                }
+                            }
+                            item.setProductName(seriesTitle != null ? seriesTitle : saleVariant.getSkuCode());
                         }
                         if (item.getProductImage() == null && saleVariant.getCustomImages() != null) {
                             try {
@@ -602,20 +663,8 @@ public class OrderService {
                             }
                         }
                         if (item.getProductSpec() == null) {
-                            StringBuilder spec = new StringBuilder();
-                            if (saleVariant.getSaleSeriesId() != null) {
-                                SaleSeries saleSeries = saleSeriesMapper.selectById(saleVariant.getSaleSeriesId());
-                                if (saleSeries != null && saleSeries.getSaleTitle() != null) {
-                                    spec.append(saleSeries.getSaleTitle());
-                                }
-                            }
-                            if (saleVariant.getCustomDescription() != null) {
-                                if (spec.length() > 0) spec.append(" - ");
-                                String desc = saleVariant.getCustomDescription();
-                                if (desc.length() > 20) desc = desc.substring(0, 20) + "...";
-                                spec.append(desc);
-                            }
-                            item.setProductSpec(spec.toString());
+                            // productSpec = 销售款式（SKU编码）
+                            item.setProductSpec(saleVariant.getSkuCode());
                         }
                     }
                 }
@@ -625,6 +674,7 @@ public class OrderService {
                 OrderItem firstItem = items.get(0);
                 String shopId = firstItem.getItemSellerId();
                 if (shopId != null) {
+                    dto.setShopId(shopId);
                     Shop shop = shopMapper.selectById(shopId);
                     if (shop != null) {
                         dto.setShopName(shop.getShopName());
@@ -681,6 +731,25 @@ public class OrderService {
         order.setTrackingNumber(trackingNumber);
         order.setShippedTime(LocalDateTime.now());
         order.setOrderStatus("SHIPPED");
+        order.setLogisticsStatus("collected"); // 发货时默认状态为已揽收
+        order.setUpdateTime(LocalDateTime.now());
+
+        orderMapper.updateById(order);
+        return order;
+    }
+
+    @Transactional(rollbackFor = Exception.class)
+    public Order updateLogisticsStatus(String orderId, String logisticsStatus) {
+        Order order = orderMapper.selectById(orderId);
+        if (order == null) {
+            throw new RuntimeException("订单不存在");
+        }
+
+        if (!"SHIPPED".equals(order.getOrderStatus())) {
+            throw new RuntimeException("订单状态不正确，无法更新物流状态");
+        }
+
+        order.setLogisticsStatus(logisticsStatus);
         order.setUpdateTime(LocalDateTime.now());
 
         orderMapper.updateById(order);
@@ -717,14 +786,29 @@ public class OrderService {
         logisticsInfo.setOrderId(orderId);
         logisticsInfo.setLogisticsCompany(order.getLogisticsCompany());
         logisticsInfo.setTrackingNumber(order.getTrackingNumber());
+        logisticsInfo.setCurrentStatus(order.getLogisticsStatus() != null ? order.getLogisticsStatus() : "collected");
 
+        // 生成物流轨迹（根据当前状态动态生成）
         List<LogisticsTrack> tracks = new ArrayList<>();
         LocalDateTime now = LocalDateTime.now();
+        String currentStatus = logisticsInfo.getCurrentStatus();
 
-        tracks.add(createTrack(now, "signed", "已签收"));
-        tracks.add(createTrack(now.minusHours(6), "delivering", "派件中"));
-        tracks.add(createTrack(now.minusDays(1), "in_transit", "运输中"));
-        tracks.add(createTrack(now.minusDays(1).minusHours(6), "collected", "已揽收"));
+        // 根据当前状态添加轨迹
+        if ("signed".equals(currentStatus)) {
+            tracks.add(createTrack(now, "signed", "已签收"));
+            tracks.add(createTrack(now.minusHours(6), "delivering", "派件中"));
+            tracks.add(createTrack(now.minusDays(1), "in_transit", "运输中"));
+            tracks.add(createTrack(now.minusDays(1).minusHours(6), "collected", "已揽收"));
+        } else if ("delivering".equals(currentStatus)) {
+            tracks.add(createTrack(now, "delivering", "派件中"));
+            tracks.add(createTrack(now.minusDays(1), "in_transit", "运输中"));
+            tracks.add(createTrack(now.minusDays(1).minusHours(6), "collected", "已揽收"));
+        } else if ("in_transit".equals(currentStatus)) {
+            tracks.add(createTrack(now, "in_transit", "运输中"));
+            tracks.add(createTrack(now.minusHours(6), "collected", "已揽收"));
+        } else {
+            tracks.add(createTrack(now, "collected", "已揽收"));
+        }
 
         logisticsInfo.setTracks(tracks);
         return logisticsInfo;
@@ -759,6 +843,7 @@ public class OrderService {
         private String orderId;
         private String logisticsCompany;
         private String trackingNumber;
+        private String currentStatus;
         private List<LogisticsTrack> tracks;
     }
 

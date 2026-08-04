@@ -46,17 +46,17 @@ public interface BlindBoxDrawRecordMapper extends BaseMapper<BlindBoxDrawRecord>
 
     /**
      * 统计抽盒机各款式抽出次数（用于数据页款式占比统计）
-     * 返回字段: saleVariantId, drawCount, isHidden, variantName, variantImage
+     * 返回字段: variantId, drawCount, isHidden, variantName, variantImage
      */
-    @Select("SELECT r.sale_variant_id AS saleVariantId, " +
+    @Select("SELECT r.variant_id AS variantId, " +
             "       COUNT(*) AS drawCount, " +
             "       MAX(r.is_hidden) AS isHidden, " +
-            "       sv.custom_description AS variantName, " +
-            "       sv.custom_images AS variantImage " +
+            "       p.name AS variantName, " +
+            "       p.image_url AS variantImage " +
             "FROM blind_box_draw_record r " +
-            "LEFT JOIN sale_variant sv ON r.sale_variant_id = sv.sale_variant_id " +
+            "LEFT JOIN product p ON r.variant_id = p.product_id " +
             "WHERE r.machine_id = #{machineId} " +
-            "GROUP BY r.sale_variant_id, sv.custom_description, sv.custom_images " +
+            "GROUP BY r.variant_id, p.name, p.image_url " +
             "ORDER BY drawCount DESC")
     List<Map<String, Object>> countVariantDrawStats(@Param("machineId") String machineId);
 
@@ -65,10 +65,10 @@ public interface BlindBoxDrawRecordMapper extends BaseMapper<BlindBoxDrawRecord>
      */
     @Select("<script>" +
             "SELECT r.*, " +
-            "       sv.custom_description AS variantName, " +
-            "       sv.custom_images AS variantImage " +
+            "       p.name AS variantName, " +
+            "       p.image_url AS variantImage " +
             "FROM blind_box_draw_record r " +
-            "LEFT JOIN sale_variant sv ON r.sale_variant_id = sv.sale_variant_id " +
+            "LEFT JOIN product p ON r.variant_id = p.product_id " +
             "WHERE r.machine_id = #{machineId} " +
             "<if test='userId != null and userId != \"\"'>" +
             "  AND r.user_id = #{userId} " +
@@ -87,11 +87,11 @@ public interface BlindBoxDrawRecordMapper extends BaseMapper<BlindBoxDrawRecord>
      * 查询用户所有抽盒记录（含款式名、图片、机器名）
      */
     @Select("SELECT r.*, " +
-            "       sv.custom_description AS variantName, " +
-            "       sv.custom_images AS variantImage, " +
+            "       p.name AS variantName, " +
+            "       p.image_url AS variantImage, " +
             "       bm.machine_name AS machineName " +
             "FROM blind_box_draw_record r " +
-            "LEFT JOIN sale_variant sv ON r.sale_variant_id = sv.sale_variant_id " +
+            "LEFT JOIN product p ON r.variant_id = p.product_id " +
             "LEFT JOIN blind_box_machine bm ON r.machine_id = bm.machine_id " +
             "WHERE r.user_id = #{userId} " +
             "ORDER BY r.created_at DESC")

@@ -84,6 +84,28 @@ public class AdminManageController {
         return Result.success("删除成功");
     }
 
+    @AuditLog(module = "ADMIN", action = "UPDATE", description = "重置店铺管理员密码")
+    @PutMapping("/merchant/{adminId}/reset-password")
+    public Result<?> resetMerchantAdminPassword(@PathVariable String adminId) {
+        try {
+            shopAdminService.resetPassword(adminId);
+            return Result.success("密码已重置为 123456");
+        } catch (RuntimeException e) {
+            return Result.error(e.getMessage());
+        }
+    }
+
+    @AuditLog(module = "ADMIN", action = "UPDATE", description = "切换店铺管理员状态")
+    @PutMapping("/merchant/{adminId}/status")
+    public Result<?> toggleMerchantAdminStatus(@PathVariable String adminId, @RequestBody ShopAdmin admin) {
+        try {
+            shopAdminService.toggleStatus(adminId, admin.getIsActive());
+            return Result.success("状态更新成功");
+        } catch (RuntimeException e) {
+            return Result.error(e.getMessage());
+        }
+    }
+
     // ==================== 平台管理员接口 ====================
 
     @GetMapping("/platform/list")
@@ -144,6 +166,17 @@ public class AdminManageController {
             @RequestParam(required = false) String shopStatus,
             @RequestParam(required = false) String auditStatus) {
         Page<Shop> result = shopService.getShopList(page, size, shopStatus, auditStatus);
+        return Result.success(result);
+    }
+
+    /**
+     * 获取待审核的商家列表
+     */
+    @GetMapping("/shop/pending")
+    public Result<?> getPendingShops(
+            @RequestParam(defaultValue = "1") int page,
+            @RequestParam(defaultValue = "10") int size) {
+        Page<Shop> result = shopService.getPendingShops(page, size);
         return Result.success(result);
     }
 
@@ -208,6 +241,20 @@ public class AdminManageController {
             return Result.error("商家不存在");
         }
         return Result.success(shop);
+    }
+
+    /**
+     * 开始审核商家（将状态从PENDING改为REVIEWING）
+     */
+    @AuditLog(module = "SHOP", action = "UPDATE", description = "开始审核商家")
+    @PutMapping("/shop/{shopId}/start-review")
+    public Result<?> startReview(@PathVariable String shopId) {
+        try {
+            shopService.startReview(shopId);
+            return Result.success("已开始审核");
+        } catch (RuntimeException e) {
+            return Result.error(e.getMessage());
+        }
     }
 
     // ==================== 用户管理接口 ====================

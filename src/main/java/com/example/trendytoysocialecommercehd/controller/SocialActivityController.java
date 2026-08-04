@@ -26,8 +26,9 @@ public class SocialActivityController {
     public Result<?> getActivityList(
             @RequestParam(defaultValue = "1") int page,
             @RequestParam(defaultValue = "10") int size,
-            @RequestParam(required = false) String activityType) {
-        Page<SocialActivity> result = socialActivityService.getPublicActivities(page, size, activityType);
+            @RequestParam(required = false) String activityType,
+            @RequestParam(required = false) String userId) {
+        Page<SocialActivity> result = socialActivityService.getPublicActivities(page, size, activityType, userId);
         // 注入当前用户的点赞和关注状态
         Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
         if (authentication != null && authentication.isAuthenticated() && !"anonymousUser".equals(authentication.getName())) {
@@ -63,7 +64,7 @@ public class SocialActivityController {
         if (activity == null) {
             return Result.error("动态不存在");
         }
-        // 注入当前用户的点赞和关注状态
+        // 注入当前用户的点赞、关注和举报状态
         Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
         String currentUserId = null;
         if (authentication != null && authentication.isAuthenticated() && !"anonymousUser".equals(authentication.getName())) {
@@ -75,10 +76,13 @@ public class SocialActivityController {
             } else {
                 activity.setIsFollowing(false);
             }
+            // 设置是否已举报
+            activity.setIsReported(socialActivityService.hasUserReported(currentUserId, "ACTIVITY", id));
         } else {
             activity.setIsLiked(false);
             activity.setIsFavorited(false);
             activity.setIsFollowing(false);
+            activity.setIsReported(false);
         }
         // 仅已登录用户记录浏览
         if (currentUserId != null) {

@@ -3,6 +3,8 @@ package com.example.trendytoysocialecommercehd.controller;
 import com.example.trendytoysocialecommercehd.common.Result;
 import com.example.trendytoysocialecommercehd.dto.MerchantLoginDTO;
 import com.example.trendytoysocialecommercehd.dto.MerchantRegisterDTO;
+import com.example.trendytoysocialecommercehd.dto.ShopApplyDTO;
+import com.example.trendytoysocialecommercehd.dto.ShopUpdateDTO;
 import com.example.trendytoysocialecommercehd.dto.ShopWithStatsDTO;
 import com.example.trendytoysocialecommercehd.entity.SaleVariant;
 import com.example.trendytoysocialecommercehd.entity.Shop;
@@ -11,8 +13,10 @@ import com.example.trendytoysocialecommercehd.mapper.OrderItemMapper;
 import com.example.trendytoysocialecommercehd.mapper.OrderMapper;
 import com.example.trendytoysocialecommercehd.mapper.SaleVariantMapper;
 import com.example.trendytoysocialecommercehd.service.ShopAdminService;
+import com.example.trendytoysocialecommercehd.service.ShopCertificationFileService;
 import com.example.trendytoysocialecommercehd.service.ShopService;
 import com.example.trendytoysocialecommercehd.util.JwtUtil;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
 
@@ -53,6 +57,11 @@ public class MerchantController {
 
     @Autowired
     private SaleVariantMapper saleVariantMapper;
+
+    @Autowired
+    private ShopCertificationFileService shopCertificationFileService;
+
+    private final ObjectMapper objectMapper = new ObjectMapper();
 
     @PostMapping("/login")
     public Result<?> login(@RequestBody MerchantLoginDTO loginDTO) {
@@ -102,24 +111,61 @@ public class MerchantController {
         }
     }
 
+    /**
+     * 商家提交入驻申请（使用 ShopApplyDTO）
+     */
     @PostMapping("/apply")
-    public Result<?> apply(@RequestBody Shop shop, @RequestHeader("Authorization") String token) {
+    public Result<?> apply(@RequestBody ShopApplyDTO dto, @RequestHeader("Authorization") String token) {
         try {
             String cleanToken = token.replace("Bearer ", "");
             String adminId = jwtUtil.getUserIdFromToken(cleanToken);
 
-            shop.setShopId("shop_" + System.currentTimeMillis());
-            shop.setAuditStatus("待审核");
-            shop.setShopStatus("待营业");
-            shop.setAuditRound(1);
-            shopService.createShop(shop);
-
-            // 关联店铺和商家账号
-            shopAdminService.updateShopId(adminId, shop.getShopId());
-
-            return Result.success("申请提交成功");
+            Shop shop = shopService.applyShop(dto, adminId);
+            return Result.success(shop);
         } catch (Exception e) {
             return Result.error("申请提交失败: " + e.getMessage());
+        }
+    }
+
+    /**
+     * 商家被拒绝后重新提交申请（覆盖原数据，重置审核状态）
+     */
+    @PostMapping("/resubmit")
+    public Result<?> resubmit(@RequestBody ShopApplyDTO dto, @RequestHeader("Authorization") String token) {
+        try {
+            String cleanToken = token.replace("Bearer ", "");
+            String adminId = jwtUtil.getUserIdFromToken(cleanToken);
+
+            ShopAdmin shopAdmin = shopAdminService.getById(adminId);
+            if (shopAdmin == null || shopAdmin.getShopId() == null) {
+                return Result.error("请先申请店铺");
+            }
+
+            Shop shop = shopService.resubmitShop(shopAdmin.getShopId(), dto);
+            return Result.success(shop);
+        } catch (Exception e) {
+            return Result.error("重新提交失败: " + e.getMessage());
+        }
+    }
+
+    /**
+     * 商家撤回入驻申请（仅 PENDING 状态可撤回，撤回后回到草稿状态可重新编辑提交）
+     */
+    @PostMapping("/withdraw")
+    public Result<?> withdraw(@RequestHeader("Authorization") String token) {
+        try {
+            String cleanToken = token.replace("Bearer ", "");
+            String adminId = jwtUtil.getUserIdFromToken(cleanToken);
+
+            ShopAdmin shopAdmin = shopAdminService.getById(adminId);
+            if (shopAdmin == null || shopAdmin.getShopId() == null) {
+                return Result.error("请先申请店铺");
+            }
+
+            Shop shop = shopService.withdrawShop(shopAdmin.getShopId());
+            return Result.success(shop);
+        } catch (Exception e) {
+            return Result.error("撤回失败: " + e.getMessage());
         }
     }
 
@@ -141,26 +187,72 @@ public class MerchantController {
         }
     }
 
-    @PutMapping("/shop/update")
-    public Result<?> updateShop(@RequestBody Shop shop, @RequestHeader("Authorization") String token) {
+    /**
+     * 获取当前店铺的资质文件 URL 映射
+     * 返回: {business_license: url, id_card_front: url, id_card_back: url}
+     */
+    @GetMapping("/shop/files")
+    public Result<?> getCurrentShopFiles(@RequestHeader("Authorization") String token) {
         try {
             String cleanToken = token.replace("Bearer ", "");
             String adminId = jwtUtil.getUserIdFromToken(cleanToken);
 
             ShopAdmin shopAdmin = shopAdminService.getShopAdminById(adminId);
-            if (!shopAdmin.getShopId().equals(shop.getShopId())) {
-                return Result.error("无权修改此店铺");
+            if (shopAdmin.getShopId() == null || shopAdmin.getShopId().isEmpty()) {
+                return Result.error("请先申请店铺");
             }
 
-            // 增加审核次数
-            Shop existingShop = shopService.getShopById(shop.getShopId());
-            shop.setAuditRound(existingShop.getAuditRound() + 1);
-            shop.setAuditStatus("待审核");
-            shopService.updateShop(shop.getShopId(), shop);
+            Map<String, String> fileUrls = shopCertificationFileService.getFileUrlsByShopId(shopAdmin.getShopId());
+            return Result.success(fileUrls);
+        } catch (Exception e) {
+            return Result.error("获取店铺文件失败: " + e.getMessage());
+        }
+    }
 
-            return Result.success("更新成功");
+    /**
+     * 按分类更新店铺信息（使用 ShopUpdateDTO）
+     */
+    @PutMapping("/shop/update")
+    public Result<?> updateShop(@RequestBody ShopUpdateDTO dto, @RequestHeader("Authorization") String token) {
+        try {
+            String cleanToken = token.replace("Bearer ", "");
+            String adminId = jwtUtil.getUserIdFromToken(cleanToken);
+
+            ShopAdmin shopAdmin = shopAdminService.getShopAdminById(adminId);
+            if (shopAdmin.getShopId() == null || shopAdmin.getShopId().isEmpty()) {
+                return Result.error("请先申请店铺");
+            }
+
+            Shop shop = shopService.updateShopByCategory(shopAdmin.getShopId(), dto);
+            return Result.success(shop);
         } catch (Exception e) {
             return Result.error("更新失败: " + e.getMessage());
+        }
+    }
+
+    /**
+     * 获取待审核的身份变更
+     */
+    @GetMapping("/shop/pending-changes")
+    public Result<?> getPendingChanges(@RequestHeader("Authorization") String token) {
+        try {
+            String cleanToken = token.replace("Bearer ", "");
+            String adminId = jwtUtil.getUserIdFromToken(cleanToken);
+
+            ShopAdmin shopAdmin = shopAdminService.getShopAdminById(adminId);
+            if (shopAdmin.getShopId() == null || shopAdmin.getShopId().isEmpty()) {
+                return Result.success(null);
+            }
+
+            Shop shop = shopService.getShopById(shopAdmin.getShopId());
+            if (shop == null || shop.getPendingData() == null || shop.getPendingData().isEmpty()) {
+                return Result.success(null);
+            }
+
+            Object pendingObj = objectMapper.readValue(shop.getPendingData(), Object.class);
+            return Result.success(pendingObj);
+        } catch (Exception e) {
+            return Result.error("获取待审核变更失败: " + e.getMessage());
         }
     }
 
@@ -265,6 +357,7 @@ public class MerchantController {
                 );
 
                 BigDecimal daySales = BigDecimal.ZERO;
+                int dayOrders = 0;
                 for (Order order : orders) {
                     List<OrderItem> items = orderItemMapper.selectList(
                             new LambdaQueryWrapper<OrderItem>()
@@ -273,12 +366,14 @@ public class MerchantController {
                     );
                     if (!items.isEmpty()) {
                         daySales = daySales.add(order.getActualAmount());
+                        dayOrders++;
                     }
                 }
 
                 DashboardDataDTO.SalesTrendItem trendItem = new DashboardDataDTO.SalesTrendItem();
                 trendItem.setDate(date.format(formatter));
                 trendItem.setSales(daySales);
+                trendItem.setOrders(dayOrders);
                 salesTrend.add(trendItem);
             }
             dashboardData.setSalesTrend(salesTrend);

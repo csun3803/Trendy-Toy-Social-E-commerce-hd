@@ -16,9 +16,17 @@ public class BlindBoxMachine {
     @TableId(value = "machine_id", type = IdType.INPUT)
     private String machineId;
 
-    /** 关联的销售系列ID */
-    @TableField(value = "sale_series_id", insertStrategy = FieldStrategy.ALWAYS)
-    private String saleSeriesId;
+    /** 关联的图鉴系列ID（抽盒机独立引用图鉴，不复用商城数据） */
+    @TableField(value = "series_id")
+    private String seriesId;
+
+    /** 套数（商家配置，如10套） */
+    @TableField(value = "set_count", insertStrategy = FieldStrategy.ALWAYS)
+    private Integer setCount;
+
+    /** 隐藏款总数量（商家配置，如10套中放1个隐藏款） */
+    @TableField(value = "hidden_count", insertStrategy = FieldStrategy.ALWAYS)
+    private Integer hiddenCount;
 
     /** 关联的店铺ID */
     @TableField(value = "shop_id", insertStrategy = FieldStrategy.ALWAYS)
@@ -90,7 +98,7 @@ public class BlindBoxMachine {
     @TableField(exist = false)
     private String shopName;
 
-    /** 非数据库字段：销售系列名称 */
+    /** 非数据库字段：图鉴系列名称 */
     @TableField(exist = false)
-    private String saleSeriesName;
+    private String seriesName;
 }

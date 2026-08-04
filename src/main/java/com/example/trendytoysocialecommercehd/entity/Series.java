@@ -27,10 +27,14 @@ public class Series {
     @TableField("cover_image")
     private String coverImage;
 
+    // 以下三个字段已从数据库删除，改为从product表实时统计
+    @TableField(exist = false)
     private Integer regularVariants;
 
+    @TableField(exist = false)
     private Integer hiddenVariants;
 
+    @TableField(exist = false)
     private Integer totalVariants;
 
     @TableField("is_limited")
@@ -58,6 +62,10 @@ public class Series {
     // 销量字段（通过查询计算）
     @TableField(exist = false)
     private Integer salesCount;
+
+    // 实际款式数量（通过子查询从product表统计）
+    @TableField(exist = false)
+    private Integer actualVariantCount;
 
     @TableField(fill = FieldFill.INSERT)
     private Date createTime;

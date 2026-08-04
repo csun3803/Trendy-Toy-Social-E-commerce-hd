@@ -11,5 +11,6 @@ public class CreateAfterSaleRequest {
     private String afterSaleType; // REFUND, RETURN
     private String reason;
     private String description;
+    private String evidenceImages; // 凭证图片JSON数组
     private BigDecimal refundAmount;
 }

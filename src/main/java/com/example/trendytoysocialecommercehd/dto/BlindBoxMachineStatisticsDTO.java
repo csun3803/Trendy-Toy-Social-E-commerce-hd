@@ -38,9 +38,6 @@ public class BlindBoxMachineStatisticsDTO {
      */
     @Data
     public static class VariantDrawStat {
-        /** 销售款式ID */
-        private String saleVariantId;
-
         /** 款式名称 */
         private String variantName;
 

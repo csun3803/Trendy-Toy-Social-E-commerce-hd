@@ -36,15 +36,7 @@ pip install -r requirements.txt
 - 数据库连接信息（与 Spring Boot 后端共用同一个 MySQL）
 - `ZHIPU_API_KEY`：前往 https://open.bigmodel.cn/usercenter/apikeys 申请
 
-### 3. 创建 user_behavior 表
-
-在 `chaowan_platform` 数据库执行：
-
-```bash
-mysql -uroot -p chaowan_platform < ../user_behavior.sql
-```
-
-### 4. 启动
+### 3. 启动
 
 ```bash
 python app.py
@@ -89,7 +81,6 @@ uvicorn app:app --host 0.0.0.0 --port 8089 --reload
 | POST | `/ai/recommend/personalized` | 个性化推荐（已登录用户） |
 | GET  | `/ai/recommend/similar/{seriesId}?limit=6` | 相似系列推荐 |
 | GET  | `/ai/recommend/hot?limit=10` | 热门推荐（无需登录） |
-| POST | `/ai/behavior` | 上报用户行为 |
 
 **个性化推荐算法（混合推荐）**：
 
@@ -99,21 +90,8 @@ score = 0.45 * content_score      # 内容相似度(theme/ip/价位命中)
       + 0.25 * popularity_score   # 全局热度
       - 0.85 * seen_penalty       # 已交互系列降权(不完全排除)
 
+数据来源: user_interaction表(收藏/浏览商品) + 订单数据(购买)
 冷启动: 用户无行为记录时, 自动回退到热度推荐
-```
-
-### 用户行为上报
-
-供推荐算法使用，请求体：
-
-```json
-{
-  "userId": "xxx",
-  "behaviorType": "BROWSE",      // BROWSE/FAVORITE/UNFAVORITE/PURCHASE/SEARCH/SHARE
-  "targetType": "SERIES",         // SERIES/PRODUCT/SHOP
-  "targetId": "series-uuid",
-  "weight": 1
-}
 ```
 
 ## 与 Java 后端集成

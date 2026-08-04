@@ -22,9 +22,6 @@ public class BlindBoxPickResultDTO {
     /** 槽位编码 */
     private String slotCode;
 
-    /** 销售款式ID */
-    private String saleVariantId;
-
     /** 原始产品ID */
     private String variantId;
 

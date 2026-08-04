@@ -12,6 +12,8 @@ import com.example.trendytoysocialecommercehd.entity.UserCoupon;
 import com.example.trendytoysocialecommercehd.mapper.CouponTemplateMapper;
 import com.example.trendytoysocialecommercehd.mapper.UserCouponMapper;
 import com.example.trendytoysocialecommercehd.mapper.UserMapper;
+import com.example.trendytoysocialecommercehd.mapper.SystemNotificationMapper;
+import com.example.trendytoysocialecommercehd.entity.SystemNotification;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
@@ -35,6 +37,9 @@ public class CouponService {
 
     @Autowired
     private UserMapper userMapper;
+
+    @Autowired
+    private SystemNotificationMapper systemNotificationMapper;
 
     // ==================== 模板管理 ====================
 
@@ -223,6 +228,19 @@ public class CouponService {
             }
             user.setCouponCount(user.getCouponCount() + 1);
             userMapper.updateById(user);
+
+            // 发送系统通知
+            SystemNotification notification = new SystemNotification();
+            notification.setNotificationId(UUID.randomUUID().toString());
+            notification.setUserId(userId);
+            notification.setTitle("优惠券到账");
+            notification.setContent("您收到一张" + template.getName() + "，快去查看吧！");
+            notification.setCategory("COUPON");
+            notification.setRelatedId(coupon.getUserCouponId());
+            notification.setRelatedType("user_coupon");
+            notification.setIsRead(false);
+            notification.setCreatedAt(new Date());
+            systemNotificationMapper.insert(notification);
         }
         return result;
     }

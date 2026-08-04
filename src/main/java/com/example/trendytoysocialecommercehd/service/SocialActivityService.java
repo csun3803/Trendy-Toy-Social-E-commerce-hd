@@ -6,9 +6,10 @@ import java.util.List;
 import java.util.Map;
 
 public interface SocialActivityService {
-    Page<SocialActivity> getPublicActivities(int page, int size, String activityType);
+    Page<SocialActivity> getPublicActivities(int page, int size, String activityType, String userId);
     Page<SocialActivity> getMyActivities(String userId, int page, int size, String publishStatus, String activityType);
     SocialActivity getActivityById(String activityId);
+    SocialActivity getActivityByIdWithReportStatus(String activityId, String currentUserId);
     SocialActivity createActivity(String userId, SocialActivity activity);
     SocialActivity updateActivity(String userId, SocialActivity activity);
     void deleteActivity(String userId, String activityId);
@@ -19,4 +20,5 @@ public interface SocialActivityService {
     void adminDeleteActivity(String activityId);
     Map<String, Long> getActivityStats();
     void incrementCommentCount(String activityId);
+    boolean hasUserReported(String userId, String targetType, String targetId);
 }

@@ -5,9 +5,11 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.example.trendytoysocialecommercehd.dto.LoginDTO;
 import com.example.trendytoysocialecommercehd.dto.RegisterDTO;
 import com.example.trendytoysocialecommercehd.entity.User;
+import com.example.trendytoysocialecommercehd.mapper.CabinetItemMapper;
 import com.example.trendytoysocialecommercehd.mapper.FollowRelationshipMapper;
 import com.example.trendytoysocialecommercehd.mapper.SocialActivityMapper;
 import com.example.trendytoysocialecommercehd.mapper.UserCouponMapper;
+import com.example.trendytoysocialecommercehd.mapper.UserInteractionMapper;
 import com.example.trendytoysocialecommercehd.mapper.UserMapper;
 import com.example.trendytoysocialecommercehd.service.UserService;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -35,6 +37,12 @@ public class UserServiceImpl implements UserService {
     @Autowired
     private UserCouponMapper userCouponMapper;
 
+    @Autowired
+    private CabinetItemMapper cabinetItemMapper;
+
+    @Autowired
+    private UserInteractionMapper userInteractionMapper;
+
     @Override
     public User login(LoginDTO loginDTO) {
         QueryWrapper<User> wrapper = new QueryWrapper<>();
@@ -49,6 +57,11 @@ public class UserServiceImpl implements UserService {
 
         if (!passwordEncoder.matches(loginDTO.getPassword(), user.getPasswordHash())) {
             throw new RuntimeException("用户名或密码错误");
+        }
+
+        // 检查账号是否被禁用
+        if ("banned".equals(user.getAccountStatus())) {
+            throw new RuntimeException("账号已被禁用，请联系客服");
         }
 
         return user;
@@ -129,14 +142,28 @@ public class UserServiceImpl implements UserService {
             Long couponCountLong = userCouponMapper.selectCount(
                     new QueryWrapper<com.example.trendytoysocialecommercehd.entity.UserCoupon>()
                             .eq("user_id", userId)
-                            .eq("status", "未使用")
+                            .eq("status", "unused")
             );
             int couponCount = couponCountLong != null ? couponCountLong.intValue() : 0;
+
+            // 统计盒柜中的藏品数量
+            int cabinetCount = cabinetItemMapper.countByUserId(userId);
+
+            // 统计收藏商品数量（从user_interaction表）
+            Long favoriteCountLong = userInteractionMapper.selectCount(
+                    new QueryWrapper<com.example.trendytoysocialecommercehd.entity.UserInteraction>()
+                            .eq("user_id", userId)
+                            .eq("action_type", "FAVORITE")
+                            .eq("status", "ACTIVE")
+            );
+            int favoriteProductCount = favoriteCountLong != null ? favoriteCountLong.intValue() : 0;
 
             user.setPostCount(postCount);
             user.setFollowingCount(followingCount);
             user.setFollowerCount(followerCount);
             user.setCouponCount(couponCount);
+            user.setCabinetCount(cabinetCount);
+            user.setFavoriteProductCount(favoriteProductCount);
             userMapper.updateById(user);
         }
     }

@@ -4,7 +4,6 @@ import com.example.trendytoysocialecommercehd.common.Result;
 import com.example.trendytoysocialecommercehd.dto.BlindBoxMachineStatisticsDTO;
 import com.example.trendytoysocialecommercehd.entity.BlindBoxDrawRecord;
 import com.example.trendytoysocialecommercehd.entity.BlindBoxMachine;
-import com.example.trendytoysocialecommercehd.entity.BlindBoxMachineVariant;
 import com.example.trendytoysocialecommercehd.entity.ShopAdmin;
 import com.example.trendytoysocialecommercehd.service.BlindBoxMachineService;
 import com.example.trendytoysocialecommercehd.service.ShopAdminService;
@@ -94,7 +93,7 @@ public class BlindBoxMachineMerchantController {
     }
 
     @PostMapping
-    @Operation(summary = "商家端-创建抽盒机")
+    @Operation(summary = "商家端-创建抽盒机（独立模式：选择图鉴系列 → 设置单抽价格 → 配置套数/隐藏款数 → 生成盒子）")
     public Result<BlindBoxMachine> create(
             @RequestHeader("Authorization") String token,
             @RequestBody Map<String, Object> body) {
@@ -102,25 +101,25 @@ public class BlindBoxMachineMerchantController {
             String shopId = resolveShopId(token);
 
             // 从请求体手动构建实体，避免 JSON 反序列化问题
-            System.out.println("[DEBUG] create body keys: " + body.keySet());
-            System.out.println("[DEBUG] create body: " + body);
             BlindBoxMachine machine = new BlindBoxMachine();
             machine.setShopId(shopId);
-            machine.setSaleSeriesId((String) body.get("saleSeriesId"));
+            // 独立模式：使用 seriesId（图鉴系列ID）
+            machine.setSeriesId((String) body.get("seriesId"));
             machine.setMachineName((String) body.get("machineName"));
             machine.setMachineDescription((String) body.get("machineDescription"));
             machine.setMachineCoverImage((String) body.get("machineCoverImage"));
             if (body.get("drawPrice") != null) {
                 machine.setDrawPrice(new BigDecimal(body.get("drawPrice").toString()));
             }
-            if (body.get("tenDrawPrice") != null) {
-                machine.setTenDrawPrice(new BigDecimal(body.get("tenDrawPrice").toString()));
-            }
-            if (body.get("sortOrder") != null) {
-                machine.setSortOrder(Integer.valueOf(body.get("sortOrder").toString()));
-            }
             if (body.get("guaranteeDraws") != null) {
                 machine.setGuaranteeDraws(Integer.valueOf(body.get("guaranteeDraws").toString()));
+            }
+            // 独立模式新增字段：套数和隐藏款数量
+            if (body.get("setCount") != null) {
+                machine.setSetCount(Integer.valueOf(body.get("setCount").toString()));
+            }
+            if (body.get("hiddenCount") != null) {
+                machine.setHiddenCount(Integer.valueOf(body.get("hiddenCount").toString()));
             }
 
             BlindBoxMachine created = blindBoxMachineService.createMachine(machine);
@@ -141,13 +140,10 @@ public class BlindBoxMachineMerchantController {
             // 越权校验
             blindBoxMachineService.getMerchantMachine(machineId, shopId);
 
-            // 从请求体手动构建实体，仅允许修改基础字段
+            // 从请求体手动构建实体，仅允许修改基础字段（独立模式下 seriesId/setCount/hiddenCount 创建后不可修改）
             BlindBoxMachine machine = new BlindBoxMachine();
             machine.setMachineId(machineId);
             machine.setShopId(shopId);
-            if (body.containsKey("saleSeriesId")) {
-                machine.setSaleSeriesId((String) body.get("saleSeriesId"));
-            }
             if (body.containsKey("machineName")) {
                 machine.setMachineName((String) body.get("machineName"));
             }
@@ -160,49 +156,12 @@ public class BlindBoxMachineMerchantController {
             if (body.get("drawPrice") != null) {
                 machine.setDrawPrice(new BigDecimal(body.get("drawPrice").toString()));
             }
-            if (body.containsKey("tenDrawPrice") && body.get("tenDrawPrice") != null) {
-                machine.setTenDrawPrice(new BigDecimal(body.get("tenDrawPrice").toString()));
-            }
-            if (body.get("sortOrder") != null) {
-                machine.setSortOrder(Integer.valueOf(body.get("sortOrder").toString()));
-            }
             // 审核相关字段和统计字段禁止修改（不设置即可）
 
             BlindBoxMachine updated = blindBoxMachineService.updateMachine(machineId, machine);
             return Result.success(updated);
         } catch (Exception e) {
             return Result.error("更新抽盒机失败: " + e.getMessage());
-        }
-    }
-
-    @GetMapping("/{machineId}/variants")
-    @Operation(summary = "商家端-获取抽盒机款式覆盖配置（默认复用 sale_variant 数据）")
-    public Result<List<BlindBoxMachineVariant>> getVariantsConfig(
-            @RequestHeader("Authorization") String token,
-            @PathVariable String machineId) {
-        try {
-            String shopId = resolveShopId(token);
-            blindBoxMachineService.getMerchantMachine(machineId, shopId);
-            List<BlindBoxMachineVariant> variants = blindBoxMachineService.getMachineVariantsConfig(machineId);
-            return Result.success(variants);
-        } catch (Exception e) {
-            return Result.error("获取款式配置失败: " + e.getMessage());
-        }
-    }
-
-    @PutMapping("/{machineId}/variants")
-    @Operation(summary = "商家端-保存抽盒机款式覆盖配置")
-    public Result<Void> saveVariantsConfig(
-            @RequestHeader("Authorization") String token,
-            @PathVariable String machineId,
-            @RequestBody List<BlindBoxMachineVariant> variants) {
-        try {
-            String shopId = resolveShopId(token);
-            blindBoxMachineService.getMerchantMachine(machineId, shopId);
-            blindBoxMachineService.saveMachineVariants(machineId, variants);
-            return Result.success();
-        } catch (Exception e) {
-            return Result.error("保存款式配置失败: " + e.getMessage());
         }
     }
 

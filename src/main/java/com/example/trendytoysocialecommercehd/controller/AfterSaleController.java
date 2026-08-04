@@ -59,6 +59,21 @@ public class AfterSaleController {
         }
     }
 
+    /**
+     * 商家端售后列表查询（支持状态过滤）
+     */
+    @GetMapping("/seller/{sellerId}/list")
+    public Result<List<AfterSaleInfoDTO>> getSellerAfterSalesWithFilter(
+            @PathVariable String sellerId,
+            @RequestParam(required = false) String status) {
+        try {
+            List<AfterSaleInfoDTO> afterSales = afterSaleService.getAfterSalesBySellerId(sellerId, status);
+            return Result.success(afterSales);
+        } catch (Exception e) {
+            return Result.error("获取商家售后列表失败: " + e.getMessage());
+        }
+    }
+
     @GetMapping("/{afterSaleId}")
     public Result<AfterSaleInfoDTO> getAfterSaleDetail(@PathVariable String afterSaleId) {
         try {
@@ -142,6 +157,19 @@ public class AfterSaleController {
             return Result.success(afterSale);
         } catch (Exception e) {
             return Result.error("申请平台介入失败: " + e.getMessage());
+        }
+    }
+
+    /**
+     * 用户取消售后申请（仅PENDING状态可取消）
+     */
+    @PostMapping("/{afterSaleId}/cancel")
+    public Result<AfterSale> cancelAfterSale(@PathVariable String afterSaleId) {
+        try {
+            AfterSale afterSale = afterSaleService.cancelAfterSale(afterSaleId);
+            return Result.success(afterSale);
+        } catch (Exception e) {
+            return Result.error("取消售后申请失败: " + e.getMessage());
         }
     }
 

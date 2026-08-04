@@ -12,6 +12,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 @RestController
@@ -21,6 +22,16 @@ public class SaleVariantController {
 
     @Autowired
     private SaleVariantService saleVariantService;
+
+    @GetMapping("/search")
+    @Operation(summary = "搜索款式", description = "按关键字搜索款式（含款式名称）")
+    public Result<Page<SaleVariantDTO>> searchVariants(
+            @Parameter(description = "搜索关键字") @RequestParam(required = false) String keyword,
+            @Parameter(description = "页码") @RequestParam(defaultValue = "1") Integer page,
+            @Parameter(description = "每页数量") @RequestParam(defaultValue = "10") Integer size) {
+        Page<SaleVariantDTO> result = saleVariantService.searchVariantsWithNames(keyword, page, size);
+        return Result.success(result);
+    }
 
     @GetMapping
     @Operation(summary = "分页查询所有销售款式", description = "获取所有销售款式列表")
@@ -103,5 +114,21 @@ public class SaleVariantController {
             return Result.success();
         }
         return Result.error("删除失败");
+    }
+
+    @PutMapping("/batch-status")
+    @Operation(summary = "批量修改销售款式状态", description = "批量修改多个销售款式的状态（如批量上架）")
+    public Result<Void> batchUpdateStatus(@RequestBody Map<String, Object> params) {
+        @SuppressWarnings("unchecked")
+        List<String> ids = (List<String>) params.get("ids");
+        String status = (String) params.get("saleStatus");
+        if (ids == null || ids.isEmpty() || status == null) {
+            return Result.error("参数不完整");
+        }
+        boolean success = saleVariantService.batchUpdateStatus(ids, status);
+        if (success) {
+            return Result.success();
+        }
+        return Result.error("批量更新状态失败");
     }
 }

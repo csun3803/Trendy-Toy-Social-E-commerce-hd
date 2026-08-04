@@ -15,4 +15,9 @@ public interface CabinetItemMapper extends BaseMapper<CabinetItem> {
             "WHERE ci.cabinet_id = #{cabinetId} " +
             "ORDER BY ci.added_at DESC")
     List<CabinetItem> selectByCabinetId(String cabinetId);
+
+    @Select("SELECT COUNT(*) FROM cabinet_item ci " +
+            "INNER JOIN my_display_cabinet c ON ci.cabinet_id = c.cabinet_id " +
+            "WHERE c.user_id = #{userId}")
+    int countByUserId(String userId);
 }

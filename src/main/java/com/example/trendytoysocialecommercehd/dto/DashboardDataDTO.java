@@ -20,6 +20,7 @@ public class DashboardDataDTO {
     public static class SalesTrendItem {
         private String date;
         private BigDecimal sales;
+        private Integer orders;
     }
 
     @Data

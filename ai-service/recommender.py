@@ -59,19 +59,21 @@ def _series_to_dict(row: dict[str, Any]) -> dict[str, Any]:
 def _fetch_user_interactions(user_id: str) -> tuple[set[str], dict[str, set[str]]]:
     """
     获取用户已交互过的所有系列ID，以及用户画像特征 (themes, ipAlbumIds)
-    数据来源：收藏、购买、浏览（user_behavior表）
+    数据来源：收藏、购买、浏览（user_interaction表）
     返回 (series_ids, {"theme": set, "ip": set, "price_bucket": set})
     """
     series_ids: set[str] = set()
     profile: dict[str, set] = {"theme": set(), "ip": set(), "price_bucket": set()}
 
-    # 1. 收藏 -> series
+    # 1. 收藏商品 -> series（通过 user_interaction 表）
     fav_rows = query_all(
         """SELECT DISTINCT s.series_id, s.theme, s.ip_album_id, s.min_price
-           FROM user_product_favorite f
-           JOIN product p ON f.product_id = p.product_id
-           LEFT JOIN series s ON p.series_id = s.series_id
-           WHERE f.user_id = %s AND f.status = 'ACTIVE' AND s.series_id IS NOT NULL""",
+           FROM user_interaction ui
+           JOIN sale_variant sv ON ui.target_id = sv.sale_variant_id
+           LEFT JOIN sale_series ss ON sv.sale_series_id = ss.sale_series_id
+           LEFT JOIN series s ON ss.series_id = s.series_id
+           WHERE ui.user_id = %s AND ui.action_type = 'FAVORITE' AND ui.target_type = 'PRODUCT'
+             AND ui.status = 'ACTIVE' AND s.series_id IS NOT NULL""",
         (user_id,),
     )
     for r in fav_rows:
@@ -82,13 +84,14 @@ def _fetch_user_interactions(user_id: str) -> tuple[set[str], dict[str, set[str]
             profile["ip"].add(r["ip_album_id"])
         profile["price_bucket"].add(_price_bucket(float(r["min_price"]) if r.get("min_price") else 0))
 
-    # 2. 购买 -> series
+    # 2. 购买 -> series（通过订单）
     bought_rows = query_all(
         """SELECT DISTINCT s.series_id, s.theme, s.ip_album_id, s.min_price
            FROM order_items oi
            JOIN orders o ON oi.order_id = o.order_id
-           LEFT JOIN product p ON oi.product_id = p.product_id
-           LEFT JOIN series s ON p.series_id = s.series_id
+           LEFT JOIN sale_variant sv ON oi.product_id = sv.sale_variant_id
+           LEFT JOIN sale_series ss ON sv.sale_series_id = ss.sale_series_id
+           LEFT JOIN series s ON ss.series_id = s.series_id
            WHERE o.user_id = %s AND s.series_id IS NOT NULL""",
         (user_id,),
     )
@@ -100,31 +103,32 @@ def _fetch_user_interactions(user_id: str) -> tuple[set[str], dict[str, set[str]
             profile["ip"].add(r["ip_album_id"])
         profile["price_bucket"].add(_price_bucket(float(r["min_price"]) if r.get("min_price") else 0))
 
-    # 3. 浏览行为（user_behavior表）-> series
+    # 3. 浏览商品（user_interaction 表 VIEW 动作）-> series
     browse_rows = query_all(
-        """SELECT target_id AS series_id FROM user_behavior
-           WHERE user_id = %s AND behavior_type = 'BROWSE' AND target_type = 'SERIES'""",
+        """SELECT DISTINCT sv.sale_series_id AS series_id
+           FROM user_interaction ui
+           JOIN sale_variant sv ON ui.target_id = sv.sale_variant_id
+           WHERE ui.user_id = %s AND ui.action_type = 'VIEW' AND ui.target_type = 'PRODUCT'
+             AND ui.status = 'ACTIVE' AND sv.sale_series_id IS NOT NULL""",
         (user_id,),
     )
-    for r in browse_rows:
-        if r.get("series_id"):
-            series_ids.add(r["series_id"])
+    browsed_series_ids = [r["series_id"] for r in browse_rows if r.get("series_id")]
+    for sid in browsed_series_ids:
+        series_ids.add(sid)
 
     # 浏览过的系列也加入画像
-    if browse_rows:
-        ids = [r["series_id"] for r in browse_rows if r.get("series_id")]
-        if ids:
-            placeholders = ",".join(["%s"] * len(ids))
-            srows = query_all(
-                f"SELECT series_id, theme, ip_album_id, min_price FROM series WHERE series_id IN ({placeholders})",
-                tuple(ids),
-            )
-            for r in srows:
-                if r.get("theme"):
-                    profile["theme"].add(r["theme"])
-                if r.get("ip_album_id"):
-                    profile["ip"].add(r["ip_album_id"])
-                profile["price_bucket"].add(_price_bucket(float(r["min_price"]) if r.get("min_price") else 0))
+    if browsed_series_ids:
+        placeholders = ",".join(["%s"] * len(browsed_series_ids))
+        srows = query_all(
+            f"SELECT series_id, theme, ip_album_id, min_price FROM sale_series WHERE series_id IN ({placeholders})",
+            tuple(browsed_series_ids),
+        )
+        for r in srows:
+            if r.get("theme"):
+                profile["theme"].add(r["theme"])
+            if r.get("ip_album_id"):
+                profile["ip"].add(r["ip_album_id"])
+            profile["price_bucket"].add(_price_bucket(float(r["min_price"]) if r.get("min_price") else 0))
 
     return series_ids, profile
 
@@ -165,50 +169,47 @@ def _cf_candidates(user_id: str, exclude: set[str], limit: int) -> tuple[list[di
     2. 把这些相似用户交互过、但当前用户没交互过的系列召回
     返回 (候选series_id列表, series_id->cf_score映射)
     """
-    # 当前用户的交互系列
+    # 当前用户的交互系列（通过 user_interaction + 订单）
     user_series_rows = query_all(
-        """SELECT DISTINCT s.series_id FROM (
-              SELECT p.series_id FROM user_product_favorite f
-              JOIN product p ON f.product_id = p.product_id
-              WHERE f.user_id = %s AND f.status = 'ACTIVE'
+        """SELECT DISTINCT ss.series_id FROM (
+              SELECT sv.sale_series_id AS series_id
+              FROM user_interaction ui
+              JOIN sale_variant sv ON ui.target_id = sv.sale_variant_id
+              WHERE ui.user_id = %s AND ui.target_type = 'PRODUCT' AND ui.status = 'ACTIVE'
               UNION
-              SELECT p.series_id FROM order_items oi
+              SELECT sv.sale_series_id AS series_id
+              FROM order_items oi
               JOIN orders o ON oi.order_id = o.order_id
-              JOIN product p ON oi.product_id = p.product_id
+              JOIN sale_variant sv ON oi.product_id = sv.sale_variant_id
               WHERE o.user_id = %s
-              UNION
-              SELECT target_id FROM user_behavior
-              WHERE user_id = %s AND behavior_type='BROWSE' AND target_type='SERIES'
-           ) s WHERE s.series_id IS NOT NULL""",
-        (user_id, user_id, user_id),
+           ) ss WHERE ss.series_id IS NOT NULL""",
+        (user_id, user_id),
     )
     user_series = {r["series_id"] for r in user_series_rows}
     if not user_series:
         return [], {}
 
     # 找出也交互过这些系列的其他用户（Jaccard相似度），取Top N
-    # 这里直接用SQL找候选相似用户（交集至少1）
     placeholders = ",".join(["%s"] * len(user_series))
     similar_users_rows = query_all(
         f"""SELECT other.user_id, COUNT(DISTINCT other.series_id) AS overlap
             FROM (
-              SELECT f.user_id, p.series_id
-              FROM user_product_favorite f JOIN product p ON f.product_id = p.product_id
-              WHERE f.status='ACTIVE' AND p.series_id IN ({placeholders}) AND f.user_id <> %s
+              SELECT ui.user_id, sv.sale_series_id AS series_id
+              FROM user_interaction ui
+              JOIN sale_variant sv ON ui.target_id = sv.sale_variant_id
+              WHERE ui.target_type = 'PRODUCT' AND ui.status = 'ACTIVE'
+                AND sv.sale_series_id IN ({placeholders}) AND ui.user_id <> %s
               UNION
-              SELECT o.user_id, p.series_id
-              FROM order_items oi JOIN orders o ON oi.order_id=o.order_id
-              JOIN product p ON oi.product_id=p.product_id
-              WHERE p.series_id IN ({placeholders}) AND o.user_id <> %s
-              UNION
-              SELECT user_id, target_id AS series_id FROM user_behavior
-              WHERE behavior_type='BROWSE' AND target_type='SERIES'
-              AND target_id IN ({placeholders}) AND user_id <> %s
+              SELECT o.user_id, sv.sale_series_id AS series_id
+              FROM order_items oi
+              JOIN orders o ON oi.order_id = o.order_id
+              JOIN sale_variant sv ON oi.product_id = sv.sale_variant_id
+              WHERE sv.sale_series_id IN ({placeholders}) AND o.user_id <> %s
             ) other
             GROUP BY other.user_id
             ORDER BY overlap DESC
             LIMIT 50""",
-        tuple(list(user_series) + [user_id] + list(user_series) + [user_id] + list(user_series) + [user_id]),
+        tuple(list(user_series) + [user_id] + list(user_series) + [user_id]),
     )
 
     if not similar_users_rows:
@@ -222,26 +223,24 @@ def _cf_candidates(user_id: str, exclude: set[str], limit: int) -> tuple[list[di
     cand_rows = query_all(
         f"""SELECT series_id, COUNT(DISTINCT user_id) AS user_count
             FROM (
-              SELECT f.user_id, p.series_id
-              FROM user_product_favorite f JOIN product p ON f.product_id = p.product_id
-              WHERE f.status='ACTIVE' AND f.user_id IN ({su_placeholders})
+              SELECT ui.user_id, sv.sale_series_id AS series_id
+              FROM user_interaction ui
+              JOIN sale_variant sv ON ui.target_id = sv.sale_variant_id
+              WHERE ui.target_type = 'PRODUCT' AND ui.status = 'ACTIVE'
+                AND ui.user_id IN ({su_placeholders})
               UNION
-              SELECT o.user_id, p.series_id
-              FROM order_items oi JOIN orders o ON oi.order_id=o.order_id
-              JOIN product p ON oi.product_id=p.product_id
+              SELECT o.user_id, sv.sale_series_id AS series_id
+              FROM order_items oi
+              JOIN orders o ON oi.order_id = o.order_id
+              JOIN sale_variant sv ON oi.product_id = sv.sale_variant_id
               WHERE o.user_id IN ({su_placeholders})
-              UNION
-              SELECT user_id, target_id AS series_id FROM user_behavior
-              WHERE behavior_type='BROWSE' AND target_type='SERIES'
-              AND user_id IN ({su_placeholders})
             ) t
             WHERE series_id IS NOT NULL
             GROUP BY series_id""",
-        tuple(similar_users + similar_users + similar_users),
+        tuple(similar_users + similar_users),
     )
 
     # 计算cf_score = sum(overlap(u, current)) for u in users who interacted with this series / total_overlap
-    total_overlap = sum(overlap_map.values()) or 1
     cf_scores: dict[str, float] = {}
     for r in cand_rows:
         sid = r["series_id"]
@@ -427,17 +426,31 @@ def hot_recommend(limit: int = 10) -> list[dict[str, Any]]:
     return [_series_to_dict(r) for r in _hot_recommend(limit)]
 
 
-def record_behavior(user_id: str, behavior_type: str, target_type: str, target_id: str, weight: int = 1) -> None:
+def record_behavior(
+    user_id: str,
+    behavior_type: str,
+    target_type: str,
+    target_id: str,
+    weight: int = 1,
+) -> None:
     """
-    记录用户行为，用于推荐算法
-    behavior_type: BROWSE / FAVORITE / UNFAVORITE / PURCHASE / SEARCH / SHARE
-    target_type: SERIES / PRODUCT / SHOP
+    记录用户行为到 user_interaction 表
+    :param user_id: 用户ID
+    :param behavior_type: 行为类型 (VIEW, FAVORITE, LIKE 等)
+    :param target_type: 目标类型 (PRODUCT, POST 等)
+    :param target_id: 目标ID
+    :param weight: 权重 (暂不使用，预留扩展)
     """
-    if not user_id or not target_id:
-        return
+    import uuid
     from db import execute
+
+    interaction_id = f"int_{uuid.uuid4().hex[:16]}"
     execute(
-        "INSERT INTO user_behavior (user_id, behavior_type, target_type, target_id, weight, behavior_time) "
-        "VALUES (%s, %s, %s, %s, %s, NOW())",
-        (user_id, behavior_type, target_type, target_id, weight),
+        """INSERT INTO user_interaction
+           (interaction_id, user_id, action_type, target_type, target_id, status, created_at)
+           VALUES (%s, %s, %s, %s, %s, 'ACTIVE', NOW())
+           ON DUPLICATE KEY UPDATE
+           status = 'ACTIVE',
+           created_at = NOW()""",
+        (interaction_id, user_id, behavior_type, target_type, target_id),
     )

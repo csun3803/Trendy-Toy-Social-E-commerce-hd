@@ -72,6 +72,15 @@ public class AfterSale {
     @TableField("reject_reason")
     private String rejectReason;
 
+    @TableField("evidence_images")
+    private String evidenceImages;
+
+    @TableField("return_deadline")
+    private LocalDateTime returnDeadline;
+
+    @TableField("after_sale_no")
+    private String afterSaleNo;
+
     @TableField("audit_time")
     private LocalDateTime auditTime;
 

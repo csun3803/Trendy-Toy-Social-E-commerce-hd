@@ -2,8 +2,10 @@ package com.example.trendytoysocialecommercehd.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.example.trendytoysocialecommercehd.entity.Report;
 import com.example.trendytoysocialecommercehd.entity.SocialActivity;
 import com.example.trendytoysocialecommercehd.entity.User;
+import com.example.trendytoysocialecommercehd.mapper.ReportMapper;
 import com.example.trendytoysocialecommercehd.mapper.SocialActivityMapper;
 import com.example.trendytoysocialecommercehd.mapper.UserMapper;
 import com.example.trendytoysocialecommercehd.service.SocialActivityService;
@@ -28,12 +30,19 @@ public class SocialActivityServiceImpl implements SocialActivityService {
     @Autowired
     private UserInteractionService userInteractionService;
 
+    @Autowired
+    private ReportMapper reportMapper;
+
     @Override
-    public Page<SocialActivity> getPublicActivities(int page, int size, String activityType) {
+    public Page<SocialActivity> getPublicActivities(int page, int size, String activityType, String userId) {
         Page<SocialActivity> pageObj = new Page<>(page, size);
         QueryWrapper<SocialActivity> wrapper = new QueryWrapper<>();
-        wrapper.eq("publish_status", "published")
-                .eq("audit_status", "审核通过");
+        wrapper.eq("publish_status", "published");
+        // 首页推荐流只显示审核通过的帖子
+        wrapper.eq("audit_status", "审核通过");
+        if (userId != null && !userId.isEmpty()) {
+            wrapper.eq("user_id", userId);
+        }
         if (activityType != null && !activityType.isEmpty()) {
             wrapper.eq("activity_type", activityType);
         }
@@ -73,6 +82,25 @@ public class SocialActivityServiceImpl implements SocialActivityService {
             fillUserInfo(Collections.singletonList(activity));
         }
         return activity;
+    }
+
+    @Override
+    public SocialActivity getActivityByIdWithReportStatus(String activityId, String currentUserId) {
+        SocialActivity activity = getActivityById(activityId);
+        if (activity != null && currentUserId != null) {
+            activity.setIsReported(reportMapper.countPendingReports("ACTIVITY", activityId) > 0
+                && hasUserReported(currentUserId, "ACTIVITY", activityId));
+        }
+        return activity;
+    }
+
+    @Override
+    public boolean hasUserReported(String userId, String targetType, String targetId) {
+        QueryWrapper<Report> wrapper = new QueryWrapper<>();
+        wrapper.eq("reporter_id", userId)
+               .eq("target_type", targetType)
+               .eq("target_id", targetId);
+        return reportMapper.selectCount(wrapper) > 0;
     }
 
     @Override
@@ -199,6 +227,7 @@ public class SocialActivityServiceImpl implements SocialActivityService {
     }
 
     @Override
+    @Transactional
     public void auditActivity(String activityId, String auditorId, String auditStatus, String auditNotes) {
         SocialActivity activity = socialActivityMapper.selectById(activityId);
         if (activity == null) {
@@ -219,6 +248,30 @@ public class SocialActivityServiceImpl implements SocialActivityService {
             if (activity.getPublishedAt() == null) {
                 activity.setPublishedAt(new Date());
             }
+        }
+
+        // 处理关联的待处理举报
+        if ("审核通过".equals(auditStatus) || "审核拒绝".equals(auditStatus)) {
+            QueryWrapper<Report> reportWrapper = new QueryWrapper<>();
+            reportWrapper.eq("target_type", "ACTIVITY")
+                        .eq("target_id", activityId)
+                        .eq("status", "PENDING");
+            List<Report> pendingReports = reportMapper.selectList(reportWrapper);
+            for (Report report : pendingReports) {
+                if ("审核通过".equals(auditStatus)) {
+                    // 审核通过 → 举报不成立
+                    report.setStatus("DISMISSED");
+                    report.setResolveNotes("帖子审核通过，举报不成立");
+                } else {
+                    // 审核拒绝 → 举报成立
+                    report.setStatus("RESOLVED");
+                    report.setResolveNotes("帖子审核拒绝，举报成立");
+                }
+                report.setResolvedBy(auditorId);
+                report.setResolvedAt(new Date());
+                reportMapper.updateById(report);
+            }
+            activity.setHasPendingReport(false);
         }
 
         socialActivityMapper.updateById(activity);
@@ -256,10 +309,9 @@ public class SocialActivityServiceImpl implements SocialActivityService {
                 .eq("audit_status", "审核拒绝"));
         stats.put("rejected", rejected);
 
-        // 已发布
+        // 已发布（先发后审：所有 published 的都算已发布）
         long published = socialActivityMapper.selectCount(new QueryWrapper<SocialActivity>()
-                .eq("publish_status", "published")
-                .eq("audit_status", "审核通过"));
+                .eq("publish_status", "published"));
         stats.put("published", published);
 
         return stats;

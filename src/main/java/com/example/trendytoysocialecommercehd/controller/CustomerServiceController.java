@@ -22,6 +22,8 @@ public class CustomerServiceController {
     @Autowired
     private JwtUtil jwtUtil;
 
+    // ========== 管理端接口 ==========
+
     /**
      * 获取会话列表
      */
@@ -30,9 +32,10 @@ public class CustomerServiceController {
             @RequestParam(defaultValue = "1") int page,
             @RequestParam(defaultValue = "10") int size,
             @RequestParam(required = false) String status,
-            @RequestParam(required = false) String source) {
+            @RequestParam(required = false) String source,
+            @RequestParam(required = false) String mode) {
         try {
-            Page<CustomerServiceSession> sessionPage = sessionService.getSessionList(page, size, status, source);
+            Page<CustomerServiceSession> sessionPage = sessionService.getSessionList(page, size, status, source, mode);
             return Result.success(sessionPage);
         } catch (Exception e) {
             e.printStackTrace();
@@ -121,7 +124,83 @@ public class CustomerServiceController {
     // ========== 用户端接口 ==========
 
     /**
-     * 用户创建/获取人工客服会话
+     * 创建/获取AI模式会话
+     * 如果有未超时的活跃会话则返回，否则创建新的AI会话
+     */
+    @PostMapping("/user/ai-session")
+    public Result<?> createAiSession(@RequestBody Map<String, String> body) {
+        try {
+            String userId = body.get("userId");
+            String userNickname = body.getOrDefault("userNickname", "");
+
+            if (userId == null || userId.isEmpty()) {
+                return Result.error("用户ID不能为空");
+            }
+
+            CustomerServiceSession session = sessionService.createAiSession(userId, userNickname);
+            return Result.success(session);
+        } catch (Exception e) {
+            e.printStackTrace();
+            return Result.error("创建会话失败");
+        }
+    }
+
+    /**
+     * 转人工：AI模式切换为HUMAN模式（同一会话）
+     */
+    @PostMapping("/user/transfer-to-human")
+    public Result<?> transferToHuman(@RequestBody Map<String, String> body) {
+        try {
+            String sessionId = body.get("sessionId");
+            if (sessionId == null || sessionId.isEmpty()) {
+                return Result.error("会话ID不能为空");
+            }
+            sessionService.transferToHuman(sessionId);
+            return Result.success("转接成功");
+        } catch (Exception e) {
+            e.printStackTrace();
+            return Result.error("转接失败: " + e.getMessage());
+        }
+    }
+
+    /**
+     * 心跳：更新会话活跃时间
+     */
+    @PostMapping("/user/heartbeat")
+    public Result<?> heartbeat(@RequestBody Map<String, String> body) {
+        try {
+            String sessionId = body.get("sessionId");
+            if (sessionId == null || sessionId.isEmpty()) {
+                return Result.error("会话ID不能为空");
+            }
+            sessionService.updateActiveTime(sessionId);
+            return Result.success("ok");
+        } catch (Exception e) {
+            e.printStackTrace();
+            return Result.error("心跳失败");
+        }
+    }
+
+    /**
+     * 用户关闭会话
+     */
+    @PostMapping("/user/close-session")
+    public Result<?> closeSession(@RequestBody Map<String, String> body) {
+        try {
+            String sessionId = body.get("sessionId");
+            if (sessionId == null || sessionId.isEmpty()) {
+                return Result.error("会话ID不能为空");
+            }
+            sessionService.closeSession(sessionId);
+            return Result.success("会话已结束");
+        } catch (Exception e) {
+            e.printStackTrace();
+            return Result.error("关闭会话失败");
+        }
+    }
+
+    /**
+     * 用户创建/获取人工客服会话（兼容旧逻辑）
      */
     @PostMapping("/user/session")
     public Result<?> createUserSession(@RequestBody Map<String, String> body) {
@@ -165,7 +244,7 @@ public class CustomerServiceController {
     }
 
     /**
-     * 用户获取进行中的会话
+     * 用户获取进行中的会话（含超时检查）
      */
     @GetMapping("/user/active-session")
     public Result<?> getActiveSession(@RequestParam String userId) {

@@ -23,6 +23,11 @@ public class SaleSeries {
 
     private String saleStatus;
 
+    // 商家上传的额外图片，JSON数组格式
+    private String customImages;
+
+    // 款式数量改为从sale_variant表实时统计
+    @TableField(exist = false)
     private Integer variantCount;
 
     @TableField(exist = false)
@@ -33,6 +38,10 @@ public class SaleSeries {
 
     @TableField(exist = false)
     private Double maxPrice;
+
+    // 从 series 表关联获取
+    @TableField(exist = false)
+    private String theme;
 
     @TableField(value = "created_at", fill = FieldFill.INSERT)
     private Date createdAt;

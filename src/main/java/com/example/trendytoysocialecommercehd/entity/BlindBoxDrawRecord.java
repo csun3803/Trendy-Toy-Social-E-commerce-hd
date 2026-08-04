@@ -28,9 +28,6 @@ public class BlindBoxDrawRecord {
     /** 盒位号 */
     private Integer slotNo;
 
-    /** 关联的销售款式ID（抽中的款式） */
-    private String saleVariantId;
-
     /** 关联的原始产品ID */
     private String variantId;
 
@@ -40,7 +37,8 @@ public class BlindBoxDrawRecord {
     /** 关联的订单ID */
     private String orderId;
 
-    /** 关联的订单号（冗余字段，便于展示） */
+    /** 关联的订单号（冗余字段，便于展示，非数据库字段） */
+    @TableField(exist = false)
     private String orderNo;
 
     /** 是否为隐藏款 */

@@ -1,5 +1,6 @@
 package com.example.trendytoysocialecommercehd.service;
 
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.IService;
 import com.example.trendytoysocialecommercehd.dto.SaleVariantDTO;
 import com.example.trendytoysocialecommercehd.entity.SaleVariant;
@@ -14,5 +15,9 @@ public interface SaleVariantService extends IService<SaleVariant> {
     SaleVariantDTO getSaleVariantWithName(String saleVariantId);
 
     int deleteBySaleSeriesId(String saleSeriesId);
+
+    boolean batchUpdateStatus(List<String> ids, String saleStatus);
+
+    Page<SaleVariantDTO> searchVariantsWithNames(String keyword, int page, int size);
 }
 

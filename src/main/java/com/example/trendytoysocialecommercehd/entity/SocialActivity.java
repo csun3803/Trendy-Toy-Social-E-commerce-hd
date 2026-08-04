@@ -31,6 +31,8 @@ public class SocialActivity {
     private Integer shareCount;
     private Date publishedAt;
     private Date updatedAt;
+    private Integer reportCount;
+    private Boolean hasPendingReport;
 
     @TableField(exist = false)
     private UserInfo userInfo;
@@ -43,6 +45,9 @@ public class SocialActivity {
 
     @TableField(exist = false)
     private Boolean isFollowing;
+
+    @TableField(exist = false)
+    private Boolean isReported;
 
     @TableField(exist = false)
     private Integer realViewCount;

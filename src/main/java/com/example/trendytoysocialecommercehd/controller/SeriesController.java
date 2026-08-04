@@ -20,7 +20,7 @@ public class SeriesController {
     private SeriesService seriesService;
 
     @GetMapping
-    @Operation(summary = "分页查询系列列表", description = "获取系列列表，支持分页和关键词搜索")
+    @Operation(summary = "分页查询系列列表", description = "获取系列列表，支持分页、关键词搜索和IP过滤")
     public Result<Page<Series>> getSeriesList(
             @Parameter(description = "页码", example = "1")
             @RequestParam(defaultValue = "1") Integer page,
@@ -29,9 +29,12 @@ public class SeriesController {
             @RequestParam(defaultValue = "12") Integer size,
 
             @Parameter(description = "搜索关键词")
-            @RequestParam(required = false) String keyword) {
+            @RequestParam(required = false) String keyword,
 
-        Page<Series> seriesPage = seriesService.getSeriesPage(page, size, keyword);
+            @Parameter(description = "IP专辑ID")
+            @RequestParam(required = false) String ipAlbumId) {
+
+        Page<Series> seriesPage = seriesService.getSeriesPage(page, size, keyword, ipAlbumId);
         return Result.success(seriesPage);
     }
 

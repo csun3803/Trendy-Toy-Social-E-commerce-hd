@@ -8,7 +8,6 @@ import com.example.trendytoysocialecommercehd.util.JwtUtil;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -17,7 +16,6 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.time.LocalDateTime;
 import java.util.List;
 import java.util.UUID;
 
@@ -32,14 +30,13 @@ public class ShopCertificationFileController {
     @Autowired
     private JwtUtil jwtUtil;
 
-    @Value("${upload.path:./images}")
-    private String basePath;
-
     @GetMapping("/{shopId}/files")
     @Operation(summary = "获取店铺的所有资质文件", description = "根据店铺ID获取该店铺上传的所有资质文件")
     public Result<List<ShopCertificationFile>> getShopFiles(@PathVariable String shopId) {
         try {
-            List<ShopCertificationFile> files = fileService.getFilesByShopId(shopId);
+            LambdaQueryWrapper<ShopCertificationFile> wrapper = new LambdaQueryWrapper<>();
+            wrapper.eq(ShopCertificationFile::getShopId, shopId);
+            List<ShopCertificationFile> files = fileService.list(wrapper);
             return Result.success(files);
         } catch (Exception e) {
             return Result.error("获取文件失败: " + e.getMessage());
@@ -83,30 +80,21 @@ public class ShopCertificationFileController {
 
             String fileUrl = "/images/shop-certification/" + fileName;
 
-            String uploadedBy = null;
-            if (token != null && !token.isEmpty()) {
-                String cleanToken = token.replace("Bearer ", "");
-                if (jwtUtil.validateToken(cleanToken)) {
-                    uploadedBy = jwtUtil.getUserIdFromToken(cleanToken);
-                }
+            // 保存到数据库 (按 shopId + fileType 唯一)
+            fileService.saveOrUpdateFile(shopId, fileType, fileUrl);
+
+            // 查询保存后的记录并返回
+            LambdaQueryWrapper<ShopCertificationFile> wrapper = new LambdaQueryWrapper<>();
+            wrapper.eq(ShopCertificationFile::getShopId, shopId);
+            wrapper.eq(ShopCertificationFile::getFileType, fileType);
+            ShopCertificationFile saved = fileService.getOne(wrapper);
+            if (saved != null && originalFilename != null) {
+                saved.setFileName(originalFilename);
+                saved.setFileSize(file.getSize());
+                fileService.updateById(saved);
             }
 
-            ShopCertificationFile certificationFile = new ShopCertificationFile();
-            certificationFile.setFileId("file_" + System.currentTimeMillis());
-            certificationFile.setShopId(shopId);
-            certificationFile.setFileType(fileType);
-            certificationFile.setFileName(originalFilename);
-            certificationFile.setFilePath(filePath.toString());
-            certificationFile.setFileUrl(fileUrl);
-            certificationFile.setFileSize(file.getSize());
-            certificationFile.setFileFormat(fileExtension);
-            certificationFile.setUploadedAt(LocalDateTime.now());
-            certificationFile.setUploadedBy(uploadedBy);
-            certificationFile.setAuditStatus("待审核");
-
-            fileService.saveFile(certificationFile);
-
-            return Result.success(certificationFile);
+            return Result.success(saved);
         } catch (IOException e) {
             e.printStackTrace();
             return Result.error("上传失败: " + e.getMessage());
@@ -115,16 +103,16 @@ public class ShopCertificationFileController {
 
     @DeleteMapping("/{shopId}/files/{fileId}")
     @Operation(summary = "删除店铺资质文件", description = "根据文件ID删除指定的资质文件")
-    public Result<?> deleteShopFile(@PathVariable String shopId, @PathVariable String fileId) {
+    public Result<?> deleteShopFile(@PathVariable String shopId, @PathVariable Long fileId) {
         try {
-            ShopCertificationFile file = fileService.getFileById(fileId);
+            ShopCertificationFile file = fileService.getById(fileId);
             if (file == null) {
                 return Result.error("文件不存在");
             }
             if (!file.getShopId().equals(shopId)) {
                 return Result.error("无权删除此文件");
             }
-            fileService.deleteFile(fileId);
+            fileService.removeById(fileId);
             return Result.success("删除成功");
         } catch (Exception e) {
             return Result.error("删除失败: " + e.getMessage());
@@ -135,7 +123,7 @@ public class ShopCertificationFileController {
     @Operation(summary = "删除指定类型的所有文件", description = "删除店铺指定类型的所有资质文件")
     public Result<?> deleteFilesByType(@PathVariable String shopId, @PathVariable String fileType) {
         try {
-            fileService.deleteFilesByShopIdAndType(shopId, fileType);
+            fileService.deleteFile(shopId, fileType);
             return Result.success("删除成功");
         } catch (Exception e) {
             return Result.error("删除失败: " + e.getMessage());

@@ -23,6 +23,29 @@ public class BlindBoxStorageController {
     @Autowired
     private BlindBoxStorageService blindBoxStorageService;
 
+    @Autowired
+    private com.example.trendytoysocialecommercehd.util.JwtUtil jwtUtil;
+
+    private String getUserIdFromToken(String token) {
+        if (token == null || token.isEmpty()) return null;
+        String cleanToken = token.replace("Bearer ", "");
+        if (!jwtUtil.validateToken(cleanToken)) return null;
+        return jwtUtil.getUserIdFromToken(cleanToken);
+    }
+
+    @GetMapping("/my-items")
+    @Operation(summary = "获取当前用户暂存柜物品（用于盒柜导入）")
+    public Result<List<BlindBoxStorage>> myItems(@RequestHeader(value = "Authorization", required = false) String token) {
+        try {
+            String userId = getUserIdFromToken(token);
+            if (userId == null) return Result.error("未登录");
+            List<BlindBoxStorage> list = blindBoxStorageService.getUserStorage(userId, true);
+            return Result.success(list);
+        } catch (Exception e) {
+            return Result.error("获取暂存柜失败: " + e.getMessage());
+        }
+    }
+
     @GetMapping
     @Operation(summary = "获取用户暂存柜列表")
     public Result<List<BlindBoxStorage>> list(

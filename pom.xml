@@ -72,13 +72,15 @@
             <optional>true</optional>
         </dependency>
 
-        <!-- 开发工具 -->
+        <!-- 开发工具 (已禁用，避免热重启问题) -->
+        <!--
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-devtools</artifactId>
             <scope>runtime</scope>
             <optional>true</optional>
         </dependency>
+        -->
 
         <!-- 测试 -->
         <dependency>

@@ -5,6 +5,7 @@ import com.example.trendytoysocialecommercehd.dto.OrderListDTO;
 import com.example.trendytoysocialecommercehd.entity.BlindBoxDrawRecord;
 import com.example.trendytoysocialecommercehd.entity.OrderItem;
 import com.example.trendytoysocialecommercehd.mapper.BlindBoxDrawRecordMapper;
+import com.example.trendytoysocialecommercehd.mapper.ProductMapper;
 import com.example.trendytoysocialecommercehd.mapper.SaleVariantMapper;
 import com.example.trendytoysocialecommercehd.mapper.SeriesMapper;
 import com.example.trendytoysocialecommercehd.mapper.UserProductFavoriteMapper;
@@ -41,6 +42,7 @@ public class AiToolsController {
     private final UserProductFavoriteMapper userProductFavoriteMapper;
     private final SaleVariantMapper saleVariantMapper;
     private final SeriesMapper seriesMapper;
+    private final ProductMapper productMapper;
 
     private static final SimpleDateFormat DATE_FMT = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
 
@@ -126,7 +128,8 @@ public class AiToolsController {
             if (seriesName == null || seriesName.trim().isEmpty()) {
                 return Result.error("seriesName 不能为空");
             }
-            List<Map<String, Object>> rows = saleVariantMapper.selectStylesBySeriesName(seriesName.trim());
+            // 从图鉴（series + product表）查询款式，而非销售款式
+            List<Map<String, Object>> rows = productMapper.selectStylesBySeriesName(seriesName.trim());
             if (rows == null) {
                 rows = new ArrayList<>();
             }

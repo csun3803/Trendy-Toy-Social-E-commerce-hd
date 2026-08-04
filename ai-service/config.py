@@ -18,8 +18,9 @@ class Settings(BaseSettings):
 
     # 智谱 ChatGLM
     ZHIPU_API_KEY: str = ""
-    ZHIPU_MODEL: str = "glm-4-flash"
-    ZHIPU_TIMEOUT: int = 30
+    ZHIPU_MODEL: str = "glm-4"  # 可改为 glm-4 以获得更稳定的响应
+    ZHIPU_TIMEOUT: int = 60  # 增加到 60 秒，防止知识库检索耗时过长
+    ZHIPU_KNOWLEDGE_BASE_ID: str = "2076583801819222016"  # 知识库ID
     FAQ_CONFIDENCE_THRESHOLD: float = 0.35
 
     # 服务

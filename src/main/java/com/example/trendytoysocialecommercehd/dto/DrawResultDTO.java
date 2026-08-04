@@ -25,10 +25,7 @@ public class DrawResultDTO {
 
     @Data
     public static class DrawnItem {
-        /** 销售款式ID */
-        private String saleVariantId;
-
-        /** 原始产品ID */
+        /** 图鉴产品ID */
         private String variantId;
 
         /** 款式名称 */

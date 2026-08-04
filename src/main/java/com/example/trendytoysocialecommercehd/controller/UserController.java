@@ -48,7 +48,7 @@ public class UserController {
             result.put("user", user);
             result.put("accessToken", accessToken);
             result.put("refreshToken", refreshToken);
-            result.put("expiresIn", 1800);
+            result.put("expiresIn", 604800);
 
             return Result.success(result);
         } catch (RuntimeException e) {
@@ -155,7 +155,7 @@ public class UserController {
             Map<String, Object> result = new HashMap<>();
             result.put("accessToken", newAccessToken);
             result.put("refreshToken", newRefreshToken);
-            result.put("expiresIn", 1800);
+            result.put("expiresIn", 604800);
 
             return Result.success(result);
         } catch (Exception e) {
@@ -175,6 +175,41 @@ public class UserController {
         } catch (Exception e) {
             e.printStackTrace();
             return Result.error("获取用户信息失败");
+        }
+    }
+
+    // ==================== 用户自己更新资料 ====================
+
+    @PutMapping("/profile")
+    public Result<?> updateMyProfile(@RequestBody Map<String, Object> updates) {
+        try {
+            Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+            if (authentication == null) {
+                return Result.error("用户未登录");
+            }
+            String userId = authentication.getName();
+
+            User user = userService.getUserById(userId);
+            if (user == null) {
+                return Result.error("用户不存在");
+            }
+
+            // 只允许修改以下字段
+            if (updates.containsKey("username")) user.setUsername((String) updates.get("username"));
+            if (updates.containsKey("bio")) user.setBio((String) updates.get("bio"));
+            if (updates.containsKey("gender")) user.setGender((String) updates.get("gender"));
+            if (updates.containsKey("location")) user.setLocation((String) updates.get("location"));
+            if (updates.containsKey("phoneNumber")) user.setPhoneNumber((String) updates.get("phoneNumber"));
+            if (updates.containsKey("email")) user.setEmail((String) updates.get("email"));
+
+            User updatedUser = userService.updateUser(userId, user);
+            return Result.success(updatedUser);
+        } catch (RuntimeException e) {
+            e.printStackTrace();
+            return Result.error(e.getMessage());
+        } catch (Exception e) {
+            e.printStackTrace();
+            return Result.error("更新资料失败");
         }
     }
 

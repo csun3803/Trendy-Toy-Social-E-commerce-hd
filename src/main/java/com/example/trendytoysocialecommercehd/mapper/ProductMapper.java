@@ -33,6 +33,7 @@ public interface ProductMapper extends BaseMapper<Product> {
             @Result(property = "price", column = "price"),
             @Result(property = "stock", column = "stock"),
             @Result(property = "description", column = "description"),
+            @Result(property = "imageUrl", column = "image_url"),
             @Result(property = "productImages", column = "image_url"),
             @Result(property = "sortOrder", column = "series_order"),
             @Result(property = "status", column = "status"),
@@ -59,5 +60,23 @@ public interface ProductMapper extends BaseMapper<Product> {
      */
     @Select("SELECT name FROM product WHERE product_id = #{productId}")
     String selectProductNameByProductId(@Param("productId") String productId);
+
+    @Select("SELECT product_id FROM product WHERE name LIKE CONCAT('%', #{keyword}, '%') AND status = 'ACTIVE'")
+    List<String> searchProductIdsByKeyword(@Param("keyword") String keyword);
+
+    /**
+     * 根据系列名称查询款式列表（从图鉴/product表）
+     * 用于AI客服工具接口
+     */
+    @Select("SELECT p.product_id AS productId, p.name AS productName, " +
+            "p.price, p.image_url AS imageUrl, p.series_order AS seriesOrder, " +
+            "CASE WHEN p.is_hidden_variant = 1 THEN true ELSE false END AS isHidden, " +
+            "p.description " +
+            "FROM product p " +
+            "JOIN series s ON p.series_id = s.series_id " +
+            "WHERE (s.series_name LIKE CONCAT('%', #{seriesName}, '%') " +
+            "   OR s.theme LIKE CONCAT('%', #{seriesName}, '%')) " +
+            "ORDER BY p.is_hidden_variant, p.series_order")
+    List<java.util.Map<String, Object>> selectStylesBySeriesName(@Param("seriesName") String seriesName);
 
 }

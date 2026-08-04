@@ -8,7 +8,6 @@ import com.example.trendytoysocialecommercehd.dto.DrawRequestDTO;
 import com.example.trendytoysocialecommercehd.dto.DrawResultDTO;
 import com.example.trendytoysocialecommercehd.entity.*;
 import com.example.trendytoysocialecommercehd.mapper.*;
-import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
@@ -30,12 +29,6 @@ public class BlindBoxMachineService {
     private BlindBoxDrawRecordMapper blindBoxDrawRecordMapper;
 
     @Autowired
-    private SaleVariantMapper saleVariantMapper;
-
-    @Autowired
-    private SaleSeriesMapper saleSeriesMapper;
-
-    @Autowired
     private ProductMapper productMapper;
 
     @Autowired
@@ -43,9 +36,6 @@ public class BlindBoxMachineService {
 
     @Autowired
     private BlindBoxQueueMapper blindBoxQueueMapper;
-
-    @Autowired
-    private BlindBoxMachineVariantMapper blindBoxMachineVariantMapper;
 
     @Autowired
     private BlindBoxSetMapper blindBoxSetMapper;
@@ -78,19 +68,20 @@ public class BlindBoxMachineService {
     }
 
     /**
-     * 获取抽盒机下的款式列表（含库存信息）
+     * 获取抽盒机下的款式列表（独立模式：从图鉴 product 表查询，不复用 sale_variant）
      */
-    public List<SaleVariant> getMachineVariants(String machineId) {
+    public List<Product> getMachineVariants(String machineId) {
         BlindBoxMachine machine = blindBoxMachineMapper.selectById(machineId);
         if (machine == null) {
             throw new RuntimeException("抽盒机不存在");
         }
-
-        LambdaQueryWrapper<SaleVariant> wrapper = new LambdaQueryWrapper<>();
-        wrapper.eq(SaleVariant::getSaleSeriesId, machine.getSaleSeriesId())
-               .eq(SaleVariant::getSaleStatus, "上架")
-               .gt(SaleVariant::getStockQuantity, 0);
-        return saleVariantMapper.selectList(wrapper);
+        if (machine.getSeriesId() == null || machine.getSeriesId().isEmpty()) {
+            return new ArrayList<>();
+        }
+        LambdaQueryWrapper<Product> wrapper = new LambdaQueryWrapper<>();
+        wrapper.eq(Product::getSeriesId, machine.getSeriesId())
+               .orderByAsc(Product::getSeriesOrder);
+        return productMapper.selectList(wrapper);
     }
 
     /**
@@ -105,7 +96,7 @@ public class BlindBoxMachineService {
     }
 
     /**
-     * 抽盒核心逻辑
+     * 抽盒核心逻辑（独立模式：从可售盒位中随机抽取，支付成功后盒位状态变为已售出）
      */
     @Transactional(rollbackFor = Exception.class)
     public DrawResultDTO draw(DrawRequestDTO request) {
@@ -122,23 +113,19 @@ public class BlindBoxMachineService {
                 ? (machine.getTenDrawPrice() != null ? machine.getTenDrawPrice() : machine.getDrawPrice().multiply(new BigDecimal("10")))
                 : machine.getDrawPrice();
 
-        // 获取该系列下有库存的款式
-        LambdaQueryWrapper<SaleVariant> variantWrapper = new LambdaQueryWrapper<>();
-        variantWrapper.eq(SaleVariant::getSaleSeriesId, machine.getSaleSeriesId())
-                      .eq(SaleVariant::getSaleStatus, "上架")
-                      .gt(SaleVariant::getStockQuantity, 0);
-        List<SaleVariant> availableVariants = saleVariantMapper.selectList(variantWrapper);
+        // 独立模式：查询所有可售盒位（AVAILABLE 状态的 slot）
+        LambdaQueryWrapper<BlindBoxSlot> slotWrapper = new LambdaQueryWrapper<>();
+        slotWrapper.eq(BlindBoxSlot::getMachineId, request.getMachineId())
+                   .eq(BlindBoxSlot::getStatus, "AVAILABLE");
+        List<BlindBoxSlot> availableSlots = blindBoxSlotMapper.selectList(slotWrapper);
 
-        if (availableVariants.isEmpty()) {
-            throw new RuntimeException("该系列已售罄");
+        if (availableSlots.isEmpty()) {
+            throw new RuntimeException("该抽盒机已售罄");
         }
 
-        // 检查库存是否足够
-        int totalAvailableStock = availableVariants.stream()
-                .mapToInt(SaleVariant::getStockQuantity)
-                .sum();
-        if (totalAvailableStock < drawCount) {
-            throw new RuntimeException("库存不足，当前仅剩 " + totalAvailableStock + " 个");
+        // 检查可售盒位是否足够
+        if (availableSlots.size() < drawCount) {
+            throw new RuntimeException("库存不足，当前仅剩 " + availableSlots.size() + " 个");
         }
 
         // 检查保底机制
@@ -149,66 +136,40 @@ public class BlindBoxMachineService {
             shouldGuarantee = true;
         }
 
-        // 随机抽取款式
+        // 打乱可售盒位顺序
+        List<BlindBoxSlot> tempAvailable = new ArrayList<>(availableSlots);
+        Collections.shuffle(tempAvailable);
+
+        // 随机抽取盒位
         List<DrawResultDTO.DrawnItem> drawnItems = new ArrayList<>();
-        List<SaleVariant> tempAvailable = new ArrayList<>(availableVariants);
+        List<BlindBoxSlot> pickedSlots = new ArrayList<>();
+        List<BlindBoxDrawRecord> records = new ArrayList<>();
 
         for (int i = 0; i < drawCount; i++) {
-            SaleVariant drawnVariant;
+            BlindBoxSlot pickedSlot;
 
-            // 最后一次抽取时检查保底
+            // 最后一次抽取时检查保底（优先抽隐藏款盒位）
             if (shouldGuarantee && i == drawCount - 1) {
-                drawnVariant = drawGuaranteedVariant(tempAvailable);
+                pickedSlot = drawGuaranteedSlot(tempAvailable);
             } else {
-                drawnVariant = drawRandomVariant(tempAvailable);
+                pickedSlot = tempAvailable.get(0);
             }
+            tempAvailable.remove(pickedSlot);
+            pickedSlots.add(pickedSlot);
 
-            // 扣减库存
-            drawnVariant.setStockQuantity(drawnVariant.getStockQuantity() - 1);
-            saleVariantMapper.updateById(drawnVariant);
-
-            // 从临时列表中移除无库存的款式
-            if (drawnVariant.getStockQuantity() <= 0) {
-                tempAvailable.remove(drawnVariant);
-            }
-
-            // 判断是否为隐藏款
-            boolean isHidden = false;
-            if (drawnVariant.getVariantId() != null) {
-                Product product = productMapper.selectById(drawnVariant.getVariantId());
-                if (product != null && product.getHiddenVariant() != null && product.getHiddenVariant()) {
-                    isHidden = true;
-                }
-            }
-
-            // 解析款式图片
-            String variantImage = "";
-            try {
-                String images = drawnVariant.getCustomImages();
-                if (images != null && images.startsWith("[")) {
-                    String parsed = images.substring(1, images.length() - 1);
-                    if (parsed.contains(",")) {
-                        variantImage = parsed.split(",")[0].trim().replaceAll("\"", "");
-                    } else {
-                        variantImage = parsed.trim().replaceAll("\"", "");
-                    }
-                } else if (images != null) {
-                    variantImage = images;
-                }
-            } catch (Exception e) {
-                variantImage = "";
-            }
+            // 独立模式：使用 slot 缓存的款式信息
+            boolean isHidden = Boolean.TRUE.equals(pickedSlot.getIsHidden());
+            String variantId = pickedSlot.getVariantId();
+            String variantName = pickedSlot.getVariantName() != null ? pickedSlot.getVariantName() : "未知款式";
+            String variantImage = pickedSlot.getVariantImage() != null ? pickedSlot.getVariantImage() : "";
 
             DrawResultDTO.DrawnItem item = new DrawResultDTO.DrawnItem();
-            item.setSaleVariantId(drawnVariant.getSaleVariantId());
-            item.setVariantId(drawnVariant.getVariantId());
-            item.setVariantName(drawnVariant.getCustomDescription() != null
-                    ? drawnVariant.getCustomDescription()
-                    : drawnVariant.getSkuCode());
+            item.setVariantId(variantId);
+            item.setVariantName(variantName);
             item.setVariantImage(variantImage);
             item.setIsHidden(isHidden);
             item.setIsGuaranteed(shouldGuarantee && i == drawCount - 1);
-            item.setPrice(drawnVariant.getSalePrice());
+            item.setPrice(machine.getDrawPrice());
             drawnItems.add(item);
 
             // 记录抽盒记录
@@ -216,19 +177,33 @@ public class BlindBoxMachineService {
             record.setRecordId(UUID.randomUUID().toString());
             record.setMachineId(request.getMachineId());
             record.setUserId(request.getUserId());
-            record.setSaleVariantId(drawnVariant.getSaleVariantId());
-            record.setVariantId(drawnVariant.getVariantId());
+            record.setSetId(pickedSlot.getSetId());
+            record.setSlotNo(pickedSlot.getSlotNo());
+            record.setVariantId(variantId);
             record.setDrawType(request.getDrawType());
             record.setIsHidden(isHidden);
             record.setIsGuaranteed(shouldGuarantee && i == drawCount - 1);
-            record.setDrawPrice(drawnVariant.getSalePrice());
+            record.setDrawPrice(machine.getDrawPrice());
             record.setStatus("PENDING_OPEN");
             blindBoxDrawRecordMapper.insert(record);
+            records.add(record);
+        }
+
+        // 独立模式：更新盒位状态为已售
+        for (BlindBoxSlot slot : pickedSlots) {
+            slot.setStatus("SOLD");
+            slot.setDrawnBy(request.getUserId());
+            slot.setDrawnAt(new Date());
+            blindBoxSlotMapper.updateById(slot);
+            // 更新套盒已售数
+            if (slot.getSetId() != null) {
+                blindBoxSetMapper.incrementSoldCount(slot.getSetId());
+            }
         }
 
         // 更新抽盒机统计
         machine.setTotalDraws(machine.getTotalDraws() + drawCount);
-        machine.setTotalStock(machine.getTotalStock() - drawCount);
+        machine.setTotalStock(Math.max(0, machine.getTotalStock() - drawCount));
         blindBoxMachineMapper.updateById(machine);
 
         // 创建订单
@@ -238,20 +213,10 @@ public class BlindBoxMachineService {
         // 回填抽盒记录的订单ID
         Order drawOrder = orderService.getOrderById(orderId);
         String orderNo = drawOrder != null ? drawOrder.getOrderNo() : null;
-        for (DrawResultDTO.DrawnItem di : drawnItems) {
-            LambdaQueryWrapper<BlindBoxDrawRecord> rw = new LambdaQueryWrapper<>();
-            rw.eq(BlindBoxDrawRecord::getMachineId, request.getMachineId())
-              .eq(BlindBoxDrawRecord::getUserId, request.getUserId())
-              .eq(BlindBoxDrawRecord::getSaleVariantId, di.getSaleVariantId())
-              .isNull(BlindBoxDrawRecord::getOrderId)
-              .orderByDesc(BlindBoxDrawRecord::getCreatedAt)
-              .last("LIMIT 1");
-            BlindBoxDrawRecord rec = blindBoxDrawRecordMapper.selectOne(rw);
-            if (rec != null) {
-                rec.setOrderId(orderId);
-                rec.setOrderNo(orderNo);
-                blindBoxDrawRecordMapper.updateById(rec);
-            }
+        for (BlindBoxDrawRecord rec : records) {
+            rec.setOrderId(orderId);
+            rec.setOrderNo(orderNo);
+            blindBoxDrawRecordMapper.updateById(rec);
         }
 
         DrawResultDTO result = new DrawResultDTO();
@@ -263,41 +228,20 @@ public class BlindBoxMachineService {
     }
 
     /**
-     * 随机抽取款式（按库存权重）
+     * 保底抽取（优先抽隐藏款盒位）
      */
-    private SaleVariant drawRandomVariant(List<SaleVariant> variants) {
-        int totalWeight = variants.stream().mapToInt(SaleVariant::getStockQuantity).sum();
-        int random = new Random().nextInt(totalWeight);
-
-        int cumulative = 0;
-        for (SaleVariant variant : variants) {
-            cumulative += variant.getStockQuantity();
-            if (random < cumulative) {
-                return variant;
+    private BlindBoxSlot drawGuaranteedSlot(List<BlindBoxSlot> slots) {
+        for (BlindBoxSlot slot : slots) {
+            if (Boolean.TRUE.equals(slot.getIsHidden())) {
+                return slot;
             }
         }
-        return variants.get(variants.size() - 1);
+        // 没有隐藏款则随机抽取第一个
+        return slots.get(0);
     }
 
     /**
-     * 保底抽取（优先抽隐藏款）
-     */
-    private SaleVariant drawGuaranteedVariant(List<SaleVariant> variants) {
-        // 查找隐藏款
-        for (SaleVariant variant : variants) {
-            if (variant.getVariantId() != null) {
-                Product product = productMapper.selectById(variant.getVariantId());
-                if (product != null && product.getHiddenVariant() != null && product.getHiddenVariant()) {
-                    return variant;
-                }
-            }
-        }
-        // 没有隐藏款则随机抽取
-        return drawRandomVariant(variants);
-    }
-
-    /**
-     * 创建抽盒订单
+     * 创建抽盒订单（独立模式：按 variantId 分组）
      */
     private String createDrawOrder(BlindBoxMachine machine, List<DrawResultDTO.DrawnItem> drawnItems,
                                     DrawRequestDTO request, BigDecimal totalPrice) {
@@ -305,14 +249,14 @@ public class BlindBoxMachineService {
 
         // 按款式分组（同一款式可能抽中多次）
         Map<String, List<DrawResultDTO.DrawnItem>> groupedItems = drawnItems.stream()
-                .collect(Collectors.groupingBy(DrawResultDTO.DrawnItem::getSaleVariantId));
+                .collect(Collectors.groupingBy(d -> d.getVariantId() != null ? d.getVariantId() : UUID.randomUUID().toString()));
 
         for (Map.Entry<String, List<DrawResultDTO.DrawnItem>> entry : groupedItems.entrySet()) {
             List<DrawResultDTO.DrawnItem> items = entry.getValue();
             DrawResultDTO.DrawnItem firstItem = items.get(0);
 
             com.example.trendytoysocialecommercehd.dto.OrderItemRequest orderItem = new com.example.trendytoysocialecommercehd.dto.OrderItemRequest();
-            orderItem.setProductId(firstItem.getSaleVariantId());
+            orderItem.setProductId(entry.getKey());
             orderItem.setOriginalPrice(firstItem.getPrice());
             orderItem.setUnitPrice(firstItem.getPrice());
             orderItem.setQuantity(items.size());
@@ -345,31 +289,37 @@ public class BlindBoxMachineService {
     }
 
     /**
-     * 创建抽盒机
+     * 创建抽盒机（独立模式：不复用商城数据，直接引用图鉴系列）
+     * 流程：选择图鉴系列 → 设置单抽价格 → 配置套数/隐藏款数 → 生成所有盒子 → 入库
+     * 盒子生成后款式固定，用户抽盒只能从可售盒子中随机抽取，支付成功后盒子状态变为已售出
      */
+    @Transactional(rollbackFor = Exception.class)
     public BlindBoxMachine createMachine(BlindBoxMachine machine) {
         if (machine.getMachineId() == null || machine.getMachineId().isEmpty()) {
             machine.setMachineId(UUID.randomUUID().toString());
         }
 
-        // 必填字段校验
-        if (machine.getSaleSeriesId() == null || machine.getSaleSeriesId().isEmpty()) {
-            throw new RuntimeException("关联销售系列ID不能为空");
+        // 必填字段校验：优先使用 seriesId（新独立模式）
+        if (machine.getSeriesId() == null || machine.getSeriesId().isEmpty()) {
+            throw new RuntimeException("请选择图鉴系列");
         }
         if (machine.getMachineName() == null || machine.getMachineName().isEmpty()) {
             throw new RuntimeException("抽盒机名称不能为空");
         }
+        if (machine.getSetCount() == null || machine.getSetCount() <= 0) {
+            throw new RuntimeException("套数必须大于0");
+        }
+        if (machine.getHiddenCount() == null || machine.getHiddenCount() < 0) {
+            machine.setHiddenCount(0);
+        }
 
-        // 默认状态：草稿 + 停用
+        // 创建后自动提交审核：审核状态=待审核，运行状态=停用（审核通过后自动启用）
         if (machine.getMachineStatus() == null || machine.getMachineStatus().isEmpty()) {
             machine.setMachineStatus("INACTIVE");
         }
         if (machine.getAuditStatus() == null || machine.getAuditStatus().isEmpty()) {
-            machine.setAuditStatus("DRAFT");
+            machine.setAuditStatus("PENDING");
         }
-
-        // 计算总库存（优先使用款式覆盖配置中的库存，未覆盖的款式使用 sale_variant 默认库存）
-        recalcMachineTotalStock(machine);
 
         if (machine.getTotalDraws() == null) {
             machine.setTotalDraws(0);
@@ -378,8 +328,141 @@ public class BlindBoxMachineService {
             machine.setTotalRevenue(BigDecimal.ZERO);
         }
 
+        // 查询图鉴系列下的所有款式（从 product 表，不复用 sale_variant）
+        LambdaQueryWrapper<Product> productWrapper = new LambdaQueryWrapper<>();
+        productWrapper.eq(Product::getSeriesId, machine.getSeriesId());
+        List<Product> allProducts = productMapper.selectList(productWrapper);
+
+        if (allProducts.isEmpty()) {
+            throw new RuntimeException("该图鉴系列下没有款式，无法创建抽盒机");
+        }
+
+        // 区分普通款和隐藏款
+        List<Product> regularProducts = new ArrayList<>();
+        List<Product> hiddenProducts = new ArrayList<>();
+        for (Product p : allProducts) {
+            if (Boolean.TRUE.equals(p.getHiddenVariant())) {
+                hiddenProducts.add(p);
+            } else {
+                regularProducts.add(p);
+            }
+        }
+        if (regularProducts.isEmpty()) {
+            throw new RuntimeException("该系列没有普通款，无法生成套盒");
+        }
+
+        // 校验隐藏款数量不超过总盒数
+        int totalBoxCount = machine.getSetCount() * regularProducts.size();
+        if (machine.getHiddenCount() > totalBoxCount) {
+            throw new RuntimeException("隐藏款数量(" + machine.getHiddenCount()
+                    + ")不能超过总盒数(" + totalBoxCount + ")");
+        }
+        if (machine.getHiddenCount() > 0 && hiddenProducts.isEmpty()) {
+            throw new RuntimeException("该系列没有隐藏款式，无法配置隐藏款");
+        }
+
+        // 总库存 = 总盒数（每个盒子是一个独立库存单位）
+        machine.setTotalStock(totalBoxCount);
+
         blindBoxMachineMapper.insert(machine);
+
+        // 生成所有套盒和盒子（款式已固定，打乱顺序后分配到各套的盒位图中）
+        generateBoxesAtCreation(machine, regularProducts, hiddenProducts);
+
         return machine;
+    }
+
+    /**
+     * 创建抽盒机时生成所有盒子（核心生成逻辑）
+     * 规则：
+     *   1. 每套包含该系列所有普通款各1个
+     *   2. hiddenCount 个隐藏款随机分配到所有套盒中，每个隐藏款替换掉一个普通款
+     *   3. 隐藏款概率 = hiddenCount / 总盒数（系统自动计算）
+     *   4. 打乱顺序后分配到各套的盒位图
+     *   5. 每个盒子缓存款式信息（name/image/type），不再依赖运行时查询
+     */
+    private void generateBoxesAtCreation(BlindBoxMachine machine,
+                                          List<Product> regularProducts,
+                                          List<Product> hiddenProducts) {
+        int setCount = machine.getSetCount();
+        int hiddenCount = machine.getHiddenCount();
+        int regularCount = regularProducts.size();
+
+        // 网格布局：3行，列数根据普通款数量决定（≤9款→3x3，>9款→3x4）
+        int rows = 3;
+        int cols = regularCount <= 9 ? 3 : 4;
+
+        // 收集所有套盒的所有盒位（用于随机分配隐藏款）
+        // 每个元素: [setIndex, positionInSet, originalProduct]
+        List<int[]> allPositions = new ArrayList<>();
+        for (int s = 0; s < setCount; s++) {
+            for (int p = 0; p < regularCount; p++) {
+                allPositions.add(new int[]{s, p});
+            }
+        }
+
+        // 随机选择 hiddenCount 个位置放置隐藏款
+        Collections.shuffle(allPositions);
+        Set<String> hiddenPositionKeys = new HashSet<>();
+        for (int i = 0; i < hiddenCount; i++) {
+            int[] pos = allPositions.get(i);
+            hiddenPositionKeys.add(pos[0] + "_" + pos[1]);
+        }
+
+        // 为每个套盒生成盒子
+        for (int s = 0; s < setCount; s++) {
+            // 构建该套的盒子列表（普通款 + 可能被替换为隐藏款）
+            List<Product> setProducts = new ArrayList<>();
+            for (int p = 0; p < regularCount; p++) {
+                String key = s + "_" + p;
+                if (hiddenPositionKeys.contains(key) && !hiddenProducts.isEmpty()) {
+                    // 该位置放置隐藏款（随机选一个隐藏款式）
+                    Product hiddenP = hiddenProducts.get(
+                            new Random().nextInt(hiddenProducts.size()));
+                    setProducts.add(hiddenP);
+                } else {
+                    setProducts.add(regularProducts.get(p));
+                }
+            }
+
+            // 打乱顺序后分配到盒位图
+            Collections.shuffle(setProducts);
+
+            // 创建套盒记录
+            BlindBoxSet set = new BlindBoxSet();
+            set.setSetId(UUID.randomUUID().toString());
+            set.setMachineId(machine.getMachineId());
+            set.setSetIndex(s);
+            set.setSetName("第" + (s + 1) + "套");
+            set.setLayoutImage(null);
+            set.setGridRows(rows);
+            set.setGridCols(cols);
+            set.setTotalSlots(regularCount);
+            set.setSoldCount(0);
+            set.setStatus("ACTIVE");
+            blindBoxSetMapper.insert(set);
+
+            // 创建盒位（slots）
+            for (int i = 0; i < setProducts.size(); i++) {
+                Product assigned = setProducts.get(i);
+                boolean isHidden = Boolean.TRUE.equals(assigned.getHiddenVariant());
+
+                BlindBoxSlot slot = new BlindBoxSlot();
+                slot.setSlotId(UUID.randomUUID().toString());
+                slot.setMachineId(machine.getMachineId());
+                slot.setSetId(set.getSetId());
+                slot.setSlotNo(i + 1);
+                slot.setSlotCode("SLOT-" + (1000 + i + 1));
+                slot.setStatus("AVAILABLE");
+                slot.setVariantId(assigned.getProductId());
+                // 缓存款式信息，不再依赖运行时查询 sale_variant
+                slot.setVariantName(assigned.getName());
+                slot.setVariantImage(assigned.getImageUrl());
+                slot.setVariantType(isHidden ? "hidden" : "regular");
+                slot.setIsHidden(isHidden);
+                blindBoxSlotMapper.insert(slot);
+            }
+        }
     }
 
     /**
@@ -392,11 +475,10 @@ public class BlindBoxMachineService {
     }
 
     /**
-     * 删除抽盒机（同时级联删除款式覆盖配置）
+     * 删除抽盒机
      */
     @Transactional(rollbackFor = Exception.class)
     public boolean deleteMachine(String machineId) {
-        blindBoxMachineVariantMapper.deleteByMachineId(machineId);
         return blindBoxMachineMapper.deleteById(machineId) > 0;
     }
 
@@ -404,7 +486,7 @@ public class BlindBoxMachineService {
 
     /**
      * 获取抽盒机的所有套盒（含格位信息）
-     * 如果没有套盒，自动生成 3 套（每套 9 格）
+     * 独立模式：盒子在创建抽盒机时已全部生成，此处仅查询展示
      */
     @Transactional(rollbackFor = Exception.class)
     public List<BlindBoxSet> getMachineSets(String machineId) {
@@ -413,26 +495,7 @@ public class BlindBoxMachineService {
             throw new RuntimeException("抽盒机不存在");
         }
 
-        if (machine.getSaleSeriesId() == null || machine.getSaleSeriesId().isEmpty()) {
-            throw new RuntimeException("该抽盒机未关联销售系列");
-        }
-
         List<BlindBoxSet> sets = blindBoxSetMapper.selectByMachineId(machineId);
-
-        // 如果没有套盒或活跃套盒为 0，自动生成
-        if (sets.isEmpty() || blindBoxSetMapper.selectActiveByMachineId(machineId).isEmpty()) {
-            int startIndex = blindBoxSetMapper.selectMaxSetIndex(machineId) + 1;
-            int setsToCreate = Math.max(1, 3 - sets.size());
-            for (int i = 0; i < setsToCreate; i++) {
-                try {
-                    BlindBoxSet newSet = createBoxSet(machineId, machine.getSaleSeriesId(), startIndex + i, null);
-                    sets.add(newSet);
-                } catch (Exception e) {
-                    log.error("自动创建套盒失败: {}", e.getMessage());
-                    break;
-                }
-            }
-        }
 
         // 为每个活跃套盒填充格位信息
         for (BlindBoxSet set : sets) {
@@ -462,171 +525,31 @@ public class BlindBoxMachineService {
     }
 
     /**
-     * 创建一个套盒（每个款式占一格，库存为0的款式显示已售出）
-     * 格子数 = 该系列普通款总数（12款→3x4，9款→3x3）
-     */
-    @Transactional(rollbackFor = Exception.class)
-    public BlindBoxSet createBoxSet(String machineId, String saleSeriesId, int setIndex, String layoutImage) {
-        // 查询该系列所有上架款式
-        LambdaQueryWrapper<SaleVariant> wrapper = new LambdaQueryWrapper<>();
-        wrapper.eq(SaleVariant::getSaleSeriesId, saleSeriesId)
-               .eq(SaleVariant::getSaleStatus, "上架");
-        List<SaleVariant> allVariants = saleVariantMapper.selectList(wrapper);
-
-        if (allVariants.isEmpty()) {
-            throw new RuntimeException("该系列没有上架款式，无法生成套盒");
-        }
-
-        // 区分普通款和隐藏款
-        List<SaleVariant> normalVariants = new ArrayList<>();
-        List<SaleVariant> hiddenVariants = new ArrayList<>();
-        for (SaleVariant sv : allVariants) {
-            boolean isHidden = false;
-            if (sv.getVariantId() != null) {
-                Product product = productMapper.selectById(sv.getVariantId());
-                if (product != null && product.getHiddenVariant() != null && product.getHiddenVariant()) {
-                    isHidden = true;
-                }
-            }
-            if (isHidden) hiddenVariants.add(sv);
-            else normalVariants.add(sv);
-        }
-
-        // 普通款总数决定格子布局：9款→3x3，12款→3x4，其他按 ceil(N/3) 列
-        int normalCount = normalVariants.size();
-        if (normalCount == 0) {
-            // 没有普通款，全部是隐藏款，回退到 3x3
-            normalVariants = allVariants;
-            hiddenVariants.clear();
-            normalCount = normalVariants.size();
-        }
-        int rows = 3;
-        int cols;
-        if (normalCount <= 9) {
-            cols = 3; // 9款及以下 → 3x3
-        } else {
-            cols = 4; // 超过9款（如12款）→ 3x4
-        }
-        int totalSlots = normalCount;
-
-        // 创建套盒
-        BlindBoxSet set = new BlindBoxSet();
-        set.setSetId(UUID.randomUUID().toString());
-        set.setMachineId(machineId);
-        set.setSetIndex(setIndex);
-        set.setSetName("第" + (setIndex + 1) + "套");
-        set.setLayoutImage(layoutImage);
-        set.setGridRows(rows);
-        set.setGridCols(cols);
-        set.setTotalSlots(totalSlots);
-        set.setSoldCount(0);
-        set.setStatus("ACTIVE");
-        blindBoxSetMapper.insert(set);
-
-        // 打乱普通款顺序，分配到格位
-        Collections.shuffle(normalVariants);
-        int soldCount = 0;
-        for (int i = 0; i < normalVariants.size(); i++) {
-            SaleVariant assigned = normalVariants.get(i);
-            boolean isHidden = false;
-            if (assigned.getVariantId() != null) {
-                Product product = productMapper.selectById(assigned.getVariantId());
-                if (product != null && product.getHiddenVariant() != null && product.getHiddenVariant()) {
-                    isHidden = true;
-                }
-            }
-
-            BlindBoxSlot slot = new BlindBoxSlot();
-            slot.setSlotId(UUID.randomUUID().toString());
-            slot.setMachineId(machineId);
-            slot.setSetId(set.getSetId());
-            slot.setSlotNo(i + 1);
-            slot.setSlotCode("SLOT-" + (1000 + i + 1));
-            slot.setSaleVariantId(assigned.getSaleVariantId());
-            slot.setVariantId(assigned.getVariantId());
-            slot.setIsHidden(isHidden);
-
-            // 库存为0的款式直接显示已售出（占位）
-            if (assigned.getStockQuantity() == null || assigned.getStockQuantity() <= 0) {
-                slot.setStatus("SOLD");
-                soldCount++;
-            } else {
-                slot.setStatus("AVAILABLE");
-            }
-            blindBoxSlotMapper.insert(slot);
-        }
-
-        // 更新套盒已售数
-        if (soldCount > 0) {
-            set.setSoldCount(soldCount);
-            blindBoxSetMapper.updateById(set);
-        }
-
-        return set;
-    }
-
-    /**
-     * 填充格位展示信息：
-     * - AVAILABLE 但库存为0 → 临时标记为 SOLD（显示已售出，不写库）
-     * - SOLD → 填充款式名称/图片
-     * - AVAILABLE 且有库存 → 隐藏款式信息（防偷看）
+     * 填充格位展示信息（独立模式：使用创建时缓存的款式信息，不再查询 sale_variant）：
+     * - SOLD → 保留缓存的款式名称/图片用于展示
+     * - AVAILABLE → 隐藏款式信息（防偷看），但保留盒位编号
      */
     private void populateSlotDisplayInfo(List<BlindBoxSlot> slots) {
         if (slots == null || slots.isEmpty()) return;
 
-        // 批量查询所有 AVAILABLE 格位对应款式的库存
-        Set<String> variantIdsToCheck = new HashSet<>();
-        for (BlindBoxSlot slot : slots) {
-            if (!"SOLD".equals(slot.getStatus()) && slot.getSaleVariantId() != null) {
-                variantIdsToCheck.add(slot.getSaleVariantId());
-            }
-        }
-        Map<String, Integer> stockMap = new HashMap<>();
-        if (!variantIdsToCheck.isEmpty()) {
-            List<SaleVariant> variants = saleVariantMapper.selectBatchIds(variantIdsToCheck);
-            for (SaleVariant sv : variants) {
-                stockMap.put(sv.getSaleVariantId(), sv.getStockQuantity() != null ? sv.getStockQuantity() : 0);
-            }
-        }
-
         for (BlindBoxSlot slot : slots) {
             if ("SOLD".equals(slot.getStatus())) {
-                // 已售：填充款式信息用于展示
-                fillSlotVariantInfo(slot);
+                // 已售：保留缓存的款式信息用于展示（variantName/variantImage 已在创建时写入）
             } else {
-                // AVAILABLE：检查实时库存
-                Integer stock = stockMap.get(slot.getSaleVariantId());
-                if (stock == null || stock <= 0) {
-                    // 库存为0，临时标记为已售出（显示款式图片让用户看到是哪个款售完）
-                    slot.setStatus("SOLD");
-                    fillSlotVariantInfo(slot);
-                } else {
-                    // 有库存：隐藏款式信息
-                    slot.setSaleVariantId(null);
-                    slot.setVariantId(null);
-                    slot.setIsHidden(null);
-                }
+                // AVAILABLE：隐藏款式信息（防偷看），保留盒位编号
+                slot.setVariantId(null);
+                slot.setVariantName(null);
+                slot.setVariantImage(null);
+                slot.setVariantType(null);
+                slot.setIsHidden(null);
             }
         }
     }
 
     /**
-     * 填充已售格位的款式信息
-     */
-    private void fillSlotVariantInfo(BlindBoxSlot slot) {
-        if (slot.getSaleVariantId() != null) {
-            SaleVariant variant = saleVariantMapper.selectById(slot.getSaleVariantId());
-            if (variant != null) {
-                slot.setVariantName(variant.getCustomDescription() != null
-                        ? variant.getCustomDescription() : variant.getSkuCode());
-                slot.setVariantImage(parseVariantImage(variant.getCustomImages()));
-            }
-        }
-    }
-
-    /**
-     * 获取九宫格选盒状态
-     * 如果该机器还没有槽位记录，则初始化9个槽位（每个预分配一个款式）
+     * 获取九宫格选盒状态（独立模式：盒子在创建时已全部生成）
+     * 对未售出的槽位，隐藏款式信息（保持神秘感）
+     * 已售出的槽位，保留缓存的款式信息用于展示
      */
     @Transactional(rollbackFor = Exception.class)
     public List<BlindBoxSlot> getMachineSlots(String machineId) {
@@ -637,85 +560,19 @@ public class BlindBoxMachineService {
 
         List<BlindBoxSlot> existingSlots = blindBoxSlotMapper.selectByMachineId(machineId);
 
-        // 如果没有槽位或所有槽位都已售完，则重新生成9个槽位
-        if (existingSlots.isEmpty() || blindBoxSlotMapper.countAvailableSlots(machineId) == 0) {
-            // 如果有旧槽位全部已售完，先保留它们（历史记录），只生成新的
-            if (!existingSlots.isEmpty() && blindBoxSlotMapper.countAvailableSlots(machineId) == 0) {
-                // 所有都售完了，生成新一批9个槽位
-            }
-            initSlots(machineId, machine.getSaleSeriesId());
-            existingSlots = blindBoxSlotMapper.selectByMachineId(machineId);
-        }
-
         // 对未售出的槽位，隐藏款式信息（保持神秘感）
+        // 已售出的槽位，保留缓存的款式信息
         for (BlindBoxSlot slot : existingSlots) {
             if (!"SOLD".equals(slot.getStatus())) {
-                slot.setSaleVariantId(null);
                 slot.setVariantId(null);
+                slot.setVariantName(null);
+                slot.setVariantImage(null);
+                slot.setVariantType(null);
                 slot.setIsHidden(null);
-            } else {
-                // 已售出的槽位，填充款式名称和图片
-                if (slot.getSaleVariantId() != null) {
-                    SaleVariant variant = saleVariantMapper.selectById(slot.getSaleVariantId());
-                    if (variant != null) {
-                        slot.setVariantName(variant.getCustomDescription() != null
-                                ? variant.getCustomDescription() : variant.getSkuCode());
-                        slot.setVariantImage(parseVariantImage(variant.getCustomImages()));
-                    }
-                }
             }
         }
 
         return existingSlots;
-    }
-
-    /**
-     * 初始化9个槽位，每个预分配一个款式
-     */
-    private void initSlots(String machineId, String saleSeriesId) {
-        // 获取有库存的款式
-        LambdaQueryWrapper<SaleVariant> wrapper = new LambdaQueryWrapper<>();
-        wrapper.eq(SaleVariant::getSaleSeriesId, saleSeriesId)
-               .eq(SaleVariant::getSaleStatus, "上架")
-               .gt(SaleVariant::getStockQuantity, 0);
-        List<SaleVariant> availableVariants = saleVariantMapper.selectList(wrapper);
-
-        if (availableVariants.isEmpty()) {
-            throw new RuntimeException("该系列已售罄，无法生成槽位");
-        }
-
-        // 为9个槽位各分配一个款式（按库存权重随机）
-        List<SaleVariant> tempAvailable = new ArrayList<>(availableVariants);
-        for (int i = 1; i <= 9; i++) {
-            SaleVariant assigned = drawRandomVariant(tempAvailable);
-
-            BlindBoxSlot slot = new BlindBoxSlot();
-            slot.setSlotId(UUID.randomUUID().toString());
-            slot.setMachineId(machineId);
-            slot.setSlotNo(i);
-            slot.setSlotCode("SLOT-" + (1000 + i));
-            slot.setStatus("AVAILABLE");
-            slot.setSaleVariantId(assigned.getSaleVariantId());
-            slot.setVariantId(assigned.getVariantId());
-
-            // 判断是否为隐藏款
-            boolean isHidden = false;
-            if (assigned.getVariantId() != null) {
-                Product product = productMapper.selectById(assigned.getVariantId());
-                if (product != null && product.getHiddenVariant() != null && product.getHiddenVariant()) {
-                    isHidden = true;
-                }
-            }
-            slot.setIsHidden(isHidden);
-
-            blindBoxSlotMapper.insert(slot);
-
-            // 减少本地库存计数，避免分配超过实际库存
-            assigned.setStockQuantity(assigned.getStockQuantity() - 1);
-            if (assigned.getStockQuantity() <= 0) {
-                tempAvailable.remove(assigned);
-            }
-        }
     }
 
     /**
@@ -830,6 +687,8 @@ public class BlindBoxMachineService {
 
     /**
      * 选盒购买（选中某个盒子立即购买并揭晓）
+     * 独立模式：盒子款式已固定在 slot 中，支付成功后盒子状态变为已售出
+     * 不再扣减 sale_variant 库存，使用 slot 缓存的款式信息
      */
     @Transactional(rollbackFor = Exception.class)
     public BlindBoxPickResultDTO pickBlindBox(BlindBoxPickRequestDTO request) {
@@ -873,20 +732,11 @@ public class BlindBoxMachineService {
             throw new RuntimeException("该盒子已被抽走，请选择其他盒子");
         }
 
-        // 获取预分配的款式
-        SaleVariant drawnVariant = saleVariantMapper.selectById(slot.getSaleVariantId());
-        if (drawnVariant == null || drawnVariant.getStockQuantity() <= 0) {
-            throw new RuntimeException("该款式库存不足");
-        }
-
-        // 判断是否为隐藏款
-        boolean isHidden = false;
-        if (drawnVariant.getVariantId() != null) {
-            Product product = productMapper.selectById(drawnVariant.getVariantId());
-            if (product != null && product.getHiddenVariant() != null && product.getHiddenVariant()) {
-                isHidden = true;
-            }
-        }
+        // 独立模式：直接使用 slot 缓存的款式信息，不再查询 sale_variant
+        boolean isHidden = Boolean.TRUE.equals(slot.getIsHidden());
+        String variantId = slot.getVariantId();
+        String variantName = slot.getVariantName() != null ? slot.getVariantName() : "未知款式";
+        String variantImage = slot.getVariantImage() != null ? slot.getVariantImage() : "";
 
         // 检查保底机制
         int userNonHiddenDraws = blindBoxDrawRecordMapper.countUserNonHiddenDraws(
@@ -895,15 +745,10 @@ public class BlindBoxMachineService {
                 && userNonHiddenDraws >= machine.getGuaranteeDraws() - 1
                 && !isHidden;
 
-        // 扣减库存
-        drawnVariant.setStockQuantity(drawnVariant.getStockQuantity() - 1);
-        saleVariantMapper.updateById(drawnVariant);
-
-        // 更新槽位状态为已售
+        // 独立模式：不再扣减 sale_variant 库存，仅更新槽位状态为已售
         slot.setStatus("SOLD");
         slot.setDrawnBy(request.getUserId());
         slot.setDrawnAt(new Date());
-        slot.setIsHidden(isHidden);
         blindBoxSlotMapper.updateById(slot);
 
         // 更新套盒已售数（如果有关联套盒）
@@ -913,7 +758,7 @@ public class BlindBoxMachineService {
 
         // 更新抽盒机统计
         machine.setTotalDraws(machine.getTotalDraws() + 1);
-        machine.setTotalStock(machine.getTotalStock() - 1);
+        machine.setTotalStock(Math.max(0, machine.getTotalStock() - 1));
         blindBoxMachineMapper.updateById(machine);
 
         // 记录抽盒历史
@@ -923,8 +768,7 @@ public class BlindBoxMachineService {
         record.setUserId(request.getUserId());
         record.setSetId(slot.getSetId());
         record.setSlotNo(slot.getSlotNo());
-        record.setSaleVariantId(drawnVariant.getSaleVariantId());
-        record.setVariantId(drawnVariant.getVariantId());
+        record.setVariantId(variantId);
         record.setDrawType("PICK");
         record.setIsHidden(isHidden);
         record.setIsGuaranteed(isGuaranteed);
@@ -933,7 +777,8 @@ public class BlindBoxMachineService {
         blindBoxDrawRecordMapper.insert(record);
 
         // 创建订单（作为支付凭证）
-        String orderId = createPickOrder(machine, drawnVariant, request, machine.getDrawPrice(), isHidden);
+        String orderId = createPickOrder(machine, variantId, variantName, variantImage,
+                request, machine.getDrawPrice(), isHidden);
 
         // 回填抽盒记录的订单ID
         Order pickOrder = orderService.getOrderById(orderId);
@@ -947,24 +792,22 @@ public class BlindBoxMachineService {
                 request.getMachineId(),
                 slot.getSetId(),
                 slot.getSlotNo(),
-                drawnVariant.getSaleVariantId(),
+                variantId,
                 isHidden,
                 machine.getDrawPrice(),
                 orderId
         );
 
-        // 构建返回结果
+        // 构建返回结果（使用 slot 缓存的款式信息）
         BlindBoxPickResultDTO result = new BlindBoxPickResultDTO();
         Order order = orderService.getOrderById(orderId);
         result.setOrderId(orderId);
         result.setOrderNo(order != null ? order.getOrderNo() : "");
         result.setSlotNo(slot.getSlotNo());
         result.setSlotCode(slot.getSlotCode());
-        result.setSaleVariantId(drawnVariant.getSaleVariantId());
-        result.setVariantId(drawnVariant.getVariantId());
-        result.setVariantName(drawnVariant.getCustomDescription() != null
-                ? drawnVariant.getCustomDescription() : drawnVariant.getSkuCode());
-        result.setVariantImage(parseVariantImage(drawnVariant.getCustomImages()));
+        result.setVariantId(variantId);
+        result.setVariantName(variantName);
+        result.setVariantImage(variantImage);
         result.setIsHidden(isHidden);
         result.setIsGuaranteed(isGuaranteed);
         result.setPrice(machine.getDrawPrice());
@@ -975,14 +818,15 @@ public class BlindBoxMachineService {
     }
 
     /**
-     * 创建选盒订单
+     * 创建选盒订单（独立模式：使用 slot 缓存的款式信息，不再依赖 sale_variant）
      */
-    private String createPickOrder(BlindBoxMachine machine, SaleVariant drawnVariant,
-                                    BlindBoxPickRequestDTO request, BigDecimal price, boolean isHidden) {
+    private String createPickOrder(BlindBoxMachine machine, String variantId, String variantName,
+                                    String variantImage, BlindBoxPickRequestDTO request,
+                                    BigDecimal price, boolean isHidden) {
         List<com.example.trendytoysocialecommercehd.dto.OrderItemRequest> orderItems = new ArrayList<>();
 
         com.example.trendytoysocialecommercehd.dto.OrderItemRequest orderItem = new com.example.trendytoysocialecommercehd.dto.OrderItemRequest();
-        orderItem.setProductId(drawnVariant.getSaleVariantId());
+        orderItem.setProductId(variantId != null ? variantId : UUID.randomUUID().toString());
         orderItem.setOriginalPrice(price);
         orderItem.setUnitPrice(price);
         orderItem.setQuantity(1);
@@ -990,9 +834,8 @@ public class BlindBoxMachineService {
         orderItem.setAllocatedDiscount(BigDecimal.ZERO);
         orderItem.setActualSubtotal(price);
         orderItem.setItemSellerId(machine.getShopId());
-        orderItem.setProductName(drawnVariant.getCustomDescription() != null
-                ? drawnVariant.getCustomDescription() : drawnVariant.getSkuCode());
-        orderItem.setProductImage(parseVariantImage(drawnVariant.getCustomImages()));
+        orderItem.setProductName(variantName);
+        orderItem.setProductImage(variantImage);
         orderItem.setProductSpec(machine.getMachineName());
         orderItems.add(orderItem);
 
@@ -1008,27 +851,6 @@ public class BlindBoxMachineService {
 
         Order order = orderService.createOrder(orderRequest);
         return order.getOrderId();
-    }
-
-    /**
-     * 解析款式图片
-     */
-    private String parseVariantImage(String customImages) {
-        if (customImages == null || customImages.isEmpty()) {
-            return "";
-        }
-        try {
-            if (customImages.startsWith("[")) {
-                String parsed = customImages.substring(1, customImages.length() - 1);
-                if (parsed.contains(",")) {
-                    return parsed.split(",")[0].trim().replaceAll("\"", "");
-                }
-                return parsed.trim().replaceAll("\"", "");
-            }
-            return customImages;
-        } catch (Exception e) {
-            return "";
-        }
     }
 
     // ==================== 商家端方法 ====================
@@ -1056,90 +878,56 @@ public class BlindBoxMachineService {
     }
 
     /**
-     * 商家端：保存款式覆盖配置（先删后插）
-     * 仅保存 overrideStock=true 或 overrideProbability=true 的记录
+     * 商家端：获取抽盒机款式配置（独立模式：从图鉴 product 表查询）
+     * 返回该抽盒机关联系列下的所有款式信息
      */
-    @Transactional(rollbackFor = Exception.class)
-    public void saveMachineVariants(String machineId, List<BlindBoxMachineVariant> variants) {
-        blindBoxMachineVariantMapper.deleteByMachineId(machineId);
-        if (variants == null || variants.isEmpty()) {
-            return;
-        }
-        for (BlindBoxMachineVariant v : variants) {
-            // 仅当至少一个覆盖项为 true 时才入库
-            boolean hasOverride = Boolean.TRUE.equals(v.getOverrideStock())
-                    || Boolean.TRUE.equals(v.getOverrideProbability());
-            if (!hasOverride) {
-                continue;
-            }
-            v.setId(UUID.randomUUID().toString());
-            v.setMachineId(machineId);
-            if (v.getOverrideStock() == null) {
-                v.setOverrideStock(false);
-            }
-            if (v.getOverrideProbability() == null) {
-                v.setOverrideProbability(false);
-            }
-            blindBoxMachineVariantMapper.insert(v);
-        }
-        // 重新计算抽盒机总库存
-        BlindBoxMachine machine = blindBoxMachineMapper.selectById(machineId);
-        if (machine != null) {
-            recalcMachineTotalStock(machine);
-            blindBoxMachineMapper.updateById(machine);
-        }
-    }
-
-    /**
-     * 商家端：获取抽盒机款式覆盖配置（含 sale_variant 默认值）
-     * 若该机器尚未配置过，则返回 sale_variant 的默认值（不写入数据库）
-     */
-    public List<BlindBoxMachineVariant> getMachineVariantsConfig(String machineId) {
+    public List<Map<String, Object>> getMachineVariantsConfig(String machineId) {
         BlindBoxMachine machine = blindBoxMachineMapper.selectById(machineId);
         if (machine == null) {
             throw new RuntimeException("抽盒机不存在");
         }
 
-        List<BlindBoxMachineVariant> existing =
-                blindBoxMachineVariantMapper.selectByMachineIdWithInfo(machineId);
-
-        // 若已有配置记录，直接返回
-        if (!existing.isEmpty()) {
-            return existing;
+        // 独立模式：必须关联图鉴系列
+        String seriesId = machine.getSeriesId();
+        if (seriesId == null || seriesId.isEmpty()) {
+            return new ArrayList<>();
         }
 
-        // 否则基于 sale_variant 生成默认配置（不写库）
-        LambdaQueryWrapper<SaleVariant> wrapper = new LambdaQueryWrapper<>();
-        wrapper.eq(SaleVariant::getSaleSeriesId, machine.getSaleSeriesId())
-               .eq(SaleVariant::getSaleStatus, "上架")
-               .orderByAsc(SaleVariant::getCreatedAt);
-        List<SaleVariant> saleVariants = saleVariantMapper.selectList(wrapper);
+        // 从图鉴 product 表查询款式信息
+        LambdaQueryWrapper<Product> wrapper = new LambdaQueryWrapper<>();
+        wrapper.eq(Product::getSeriesId, seriesId)
+               .orderByAsc(Product::getSeriesOrder);
+        List<Product> products = productMapper.selectList(wrapper);
 
-        List<BlindBoxMachineVariant> result = new ArrayList<>();
-        for (SaleVariant sv : saleVariants) {
-            BlindBoxMachineVariant v = new BlindBoxMachineVariant();
-            v.setMachineId(machineId);
-            v.setSaleVariantId(sv.getSaleVariantId());
-            v.setVariantId(sv.getVariantId());
-            v.setOverrideStock(false);
-            v.setOverrideProbability(false);
-            v.setOriginalStock(sv.getStockQuantity());
-            v.setVariantName(sv.getCustomDescription());
-            v.setVariantImage(parseVariantImage(sv.getCustomImages()));
-            // 隐藏款标记
-            if (sv.getVariantId() != null) {
-                Product p = productMapper.selectById(sv.getVariantId());
-                if (p != null && Boolean.TRUE.equals(p.getHiddenVariant())) {
-                    v.setIsHidden(true);
-                }
+        // 统计每个款式在 slot 中的可售数量
+        LambdaQueryWrapper<BlindBoxSlot> slotWrapper = new LambdaQueryWrapper<>();
+        slotWrapper.eq(BlindBoxSlot::getMachineId, machineId)
+                   .eq(BlindBoxSlot::getStatus, "AVAILABLE");
+        List<BlindBoxSlot> availableSlots = blindBoxSlotMapper.selectList(slotWrapper);
+        Map<String, Integer> stockMap = new HashMap<>();
+        for (BlindBoxSlot slot : availableSlots) {
+            if (slot.getVariantId() != null) {
+                stockMap.merge(slot.getVariantId(), 1, Integer::sum);
             }
+        }
+
+        List<Map<String, Object>> result = new ArrayList<>();
+        for (Product p : products) {
+            Map<String, Object> v = new HashMap<>();
+            v.put("machineId", machineId);
+            v.put("variantId", p.getProductId());
+            v.put("variantName", p.getName());
+            v.put("variantImage", p.getImageUrl());
+            v.put("isHidden", Boolean.TRUE.equals(p.getHiddenVariant()));
+            v.put("availableStock", stockMap.getOrDefault(p.getProductId(), 0));
             result.add(v);
         }
         return result;
     }
 
     /**
-     * 商家端：更新抽盒机状态（启用/停用）
+     * 商家端：更新抽盒机状态（启用/下架）
+     * 商家可控制 ACTIVE/TAKEDOWN 状态，不能设置 INACTIVE（禁用由管理员控制）
      * 状态约束：审核未通过的抽盒机不能启用
      */
     @Transactional(rollbackFor = Exception.class)
@@ -1148,8 +936,8 @@ public class BlindBoxMachineService {
         if ("ACTIVE".equals(status) && !"APPROVED".equals(machine.getAuditStatus())) {
             throw new RuntimeException("审核未通过的抽盒机不能启用");
         }
-        if ("TAKEDOWN".equals(status)) {
-            throw new RuntimeException("商家无权设置强制下架状态");
+        if ("INACTIVE".equals(status)) {
+            throw new RuntimeException("商家无权设置禁用状态，禁用由管理员控制");
         }
         machine.setMachineStatus(status);
         blindBoxMachineMapper.updateById(machine);
@@ -1195,6 +983,13 @@ public class BlindBoxMachineService {
      */
     public List<BlindBoxDrawRecord> getUserAllDrawRecords(String userId) {
         return blindBoxDrawRecordMapper.selectUserRecords(userId);
+    }
+
+    /**
+     * 获取用户在某台抽盒机的抽盒记录
+     */
+    public List<BlindBoxDrawRecord> getUserMachineDrawRecords(String userId, String machineId) {
+        return blindBoxDrawRecordMapper.selectMachineRecords(machineId, userId, null);
     }
 
     /**
@@ -1248,6 +1043,7 @@ public class BlindBoxMachineService {
             throw new RuntimeException("仅待审核状态可执行审核操作");
         }
         machine.setAuditStatus("APPROVED");
+        machine.setMachineStatus("ACTIVE");
         machine.setAuditedAt(new Date());
         blindBoxMachineMapper.updateById(machine);
         return machine;
@@ -1296,6 +1092,27 @@ public class BlindBoxMachineService {
     }
 
     /**
+     * 管理员端：启用/禁用抽盒机
+     * 管理员可控制 ACTIVE/INACTIVE 状态，不能设置 TAKEDOWN
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public BlindBoxMachine adminUpdateMachineStatus(String machineId, String status) {
+        BlindBoxMachine machine = blindBoxMachineMapper.selectById(machineId);
+        if (machine == null) {
+            throw new RuntimeException("抽盒机不存在");
+        }
+        if ("ACTIVE".equals(status) && !"APPROVED".equals(machine.getAuditStatus())) {
+            throw new RuntimeException("审核未通过的抽盒机不能启用");
+        }
+        if ("TAKEDOWN".equals(status)) {
+            throw new RuntimeException("管理员无权设置下架状态，请使用强制下架接口");
+        }
+        machine.setMachineStatus(status);
+        blindBoxMachineMapper.updateById(machine);
+        return machine;
+    }
+
+    /**
      * 管理员端：获取抽盒机统计数据
      */
     public BlindBoxMachineStatisticsDTO getAdminMachineStatistics(String machineId) {
@@ -1309,34 +1126,11 @@ public class BlindBoxMachineService {
     // ==================== 私有辅助方法 ====================
 
     /**
-     * 重新计算抽盒机总库存
-     * 规则：
-     *   - 覆盖库存的款式 -> 使用覆盖值
-     *   - 未覆盖库存的款式 -> 使用 sale_variant.stock_quantity
+     * 重新计算抽盒机总库存（独立模式：统计可售盒位数量）
      */
     private void recalcMachineTotalStock(BlindBoxMachine machine) {
-        LambdaQueryWrapper<SaleVariant> wrapper = new LambdaQueryWrapper<>();
-        wrapper.eq(SaleVariant::getSaleSeriesId, machine.getSaleSeriesId())
-               .eq(SaleVariant::getSaleStatus, "上架");
-        List<SaleVariant> saleVariants = saleVariantMapper.selectList(wrapper);
-
-        List<BlindBoxMachineVariant> overrides =
-                blindBoxMachineVariantMapper.selectStockOverrides(machine.getMachineId());
-        Map<String, Integer> overrideMap = new HashMap<>();
-        for (BlindBoxMachineVariant ov : overrides) {
-            if (ov.getStockQuantity() != null) {
-                overrideMap.put(ov.getSaleVariantId(), ov.getStockQuantity());
-            }
-        }
-
-        int total = 0;
-        for (SaleVariant sv : saleVariants) {
-            Integer stock = overrideMap.getOrDefault(sv.getSaleVariantId(), sv.getStockQuantity());
-            if (stock != null) {
-                total += stock;
-            }
-        }
-        machine.setTotalStock(total);
+        int availableCount = blindBoxSlotMapper.countAvailableSlots(machine.getMachineId());
+        machine.setTotalStock(availableCount);
     }
 
     /**
@@ -1368,7 +1162,6 @@ public class BlindBoxMachineService {
         for (Map<String, Object> row : rows) {
             BlindBoxMachineStatisticsDTO.VariantDrawStat stat =
                     new BlindBoxMachineStatisticsDTO.VariantDrawStat();
-            stat.setSaleVariantId((String) row.get("saleVariantId"));
             stat.setVariantName((String) row.get("variantName"));
             stat.setVariantImage((String) row.get("variantImage"));
             Object hiddenObj = row.get("isHidden");

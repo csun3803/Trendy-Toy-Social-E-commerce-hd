@@ -3,7 +3,12 @@ package com.example.trendytoysocialecommercehd.controller;
 import com.example.trendytoysocialecommercehd.common.Result;
 import com.example.trendytoysocialecommercehd.entity.SocialActivity;
 import com.example.trendytoysocialecommercehd.entity.User;
+import com.example.trendytoysocialecommercehd.entity.Product;
 import com.example.trendytoysocialecommercehd.mapper.CommentMapper;
+import com.example.trendytoysocialecommercehd.mapper.ProductMapper;
+import com.example.trendytoysocialecommercehd.mapper.SaleVariantMapper;
+import com.example.trendytoysocialecommercehd.mapper.SaleSeriesMapper;
+import com.example.trendytoysocialecommercehd.mapper.ShopMapper;
 import com.example.trendytoysocialecommercehd.mapper.SocialActivityMapper;
 import com.example.trendytoysocialecommercehd.mapper.UserInteractionMapper;
 import com.example.trendytoysocialecommercehd.service.SocialActivityService;
@@ -37,6 +42,18 @@ public class UserInteractionController {
 
     @Autowired
     private SocialActivityMapper socialActivityMapper;
+
+    @Autowired
+    private SaleVariantMapper saleVariantMapper;
+
+    @Autowired
+    private SaleSeriesMapper saleSeriesMapper;
+
+    @Autowired
+    private ShopMapper shopMapper;
+
+    @Autowired
+    private ProductMapper productMapper;
 
     // 点赞/取消点赞
     @PostMapping("/like")
@@ -160,6 +177,9 @@ public class UserInteractionController {
         if ("ACTIVITY".equals(targetType)) {
             return Result.success(buildActivityList(targetIds));
         }
+        if ("PRODUCT".equals(targetType)) {
+            return Result.success(buildProductList(targetIds));
+        }
         return Result.success(targetIds);
     }
 
@@ -171,7 +191,94 @@ public class UserInteractionController {
         if ("ACTIVITY".equals(targetType)) {
             return Result.success(buildActivityList(targetIds));
         }
+        if ("PRODUCT".equals(targetType)) {
+            return Result.success(buildProductList(targetIds));
+        }
         return Result.success(targetIds);
+    }
+
+    // 构建商品详情列表（同时支持 SaleVariant 和 Product 图鉴款式）
+    private java.util.List<Map<String, Object>> buildProductList(List<String> targetIds) {
+        java.util.List<Map<String, Object>> products = new java.util.ArrayList<>();
+        for (String targetId : targetIds) {
+            // 先尝试从 Product（图鉴款式）表查找
+            Product product = productMapper.selectById(targetId);
+            if (product != null) {
+                Map<String, Object> map = new HashMap<>();
+                map.put("productId", product.getProductId());
+                map.put("productName", product.getName());
+                map.put("variantName", product.getName());
+                map.put("price", product.getPrice());
+                String image = parseVariantImage(product.getImageUrl());
+                map.put("productImage", image);
+                map.put("variantImage", image);
+                // 系列信息
+                if (product.getSeriesId() != null) {
+                    com.example.trendytoysocialecommercehd.entity.SaleSeries series = 
+                        saleSeriesMapper.selectById(product.getSeriesId());
+                    if (series != null && series.getShopId() != null) {
+                        com.example.trendytoysocialecommercehd.entity.Shop shop = 
+                            shopMapper.selectById(series.getShopId());
+                        if (shop != null) {
+                            map.put("shopId", series.getShopId());
+                            map.put("shopName", shop.getShopName());
+                        }
+                    }
+                }
+                products.add(map);
+                continue;
+            }
+            // 如果 Product 表没有，再尝试从 SaleVariant 表查找
+            com.example.trendytoysocialecommercehd.entity.SaleVariant variant = 
+                saleVariantMapper.selectById(targetId);
+            if (variant != null) {
+                Map<String, Object> map = new HashMap<>();
+                map.put("saleVariantId", variant.getSaleVariantId());
+                map.put("productId", variant.getSaleVariantId());
+                map.put("productName", variant.getCustomDescription() != null 
+                    ? variant.getCustomDescription() : variant.getSkuCode());
+                map.put("variantName", variant.getCustomDescription() != null 
+                    ? variant.getCustomDescription() : variant.getSkuCode());
+                map.put("price", variant.getSalePrice());
+                // 解析图片
+                String image = parseVariantImage(variant.getCustomImages());
+                map.put("productImage", image);
+                map.put("variantImage", image);
+                // 获取店铺信息
+                if (variant.getSaleSeriesId() != null) {
+                    com.example.trendytoysocialecommercehd.entity.SaleSeries series = 
+                        saleSeriesMapper.selectById(variant.getSaleSeriesId());
+                    if (series != null) {
+                        map.put("shopId", series.getShopId());
+                        if (series.getShopId() != null) {
+                            com.example.trendytoysocialecommercehd.entity.Shop shop = 
+                                shopMapper.selectById(series.getShopId());
+                            if (shop != null) {
+                                map.put("shopName", shop.getShopName());
+                            }
+                        }
+                    }
+                }
+                products.add(map);
+            }
+        }
+        return products;
+    }
+
+    private String parseVariantImage(String customImages) {
+        if (customImages == null || customImages.isEmpty()) return "";
+        try {
+            if (customImages.startsWith("[") && customImages.endsWith("]")) {
+                String parsed = customImages.substring(1, customImages.length() - 1);
+                if (parsed.contains(",")) {
+                    return parsed.split(",")[0].trim().replaceAll("\"", "");
+                }
+                return parsed.trim().replaceAll("\"", "");
+            }
+            return customImages;
+        } catch (Exception e) {
+            return customImages;
+        }
     }
 
     // 构建动态详情列表（公共方法）

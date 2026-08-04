@@ -9,7 +9,7 @@ import com.example.trendytoysocialecommercehd.entity.BlindBoxDrawRecord;
 import com.example.trendytoysocialecommercehd.entity.BlindBoxMachine;
 import com.example.trendytoysocialecommercehd.entity.BlindBoxSet;
 import com.example.trendytoysocialecommercehd.entity.BlindBoxSlot;
-import com.example.trendytoysocialecommercehd.entity.SaleVariant;
+import com.example.trendytoysocialecommercehd.entity.Product;
 import com.example.trendytoysocialecommercehd.service.BlindBoxMachineService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -50,10 +50,10 @@ public class BlindBoxMachineController {
     }
 
     @GetMapping("/machines/{machineId}/variants")
-    @Operation(summary = "获取抽盒机下的款式列表")
-    public Result<List<SaleVariant>> getMachineVariants(@PathVariable String machineId) {
+    @Operation(summary = "获取抽盒机下的款式列表（图鉴款式）")
+    public Result<List<Product>> getMachineVariants(@PathVariable String machineId) {
         try {
-            List<SaleVariant> variants = blindBoxMachineService.getMachineVariants(machineId);
+            List<Product> variants = blindBoxMachineService.getMachineVariants(machineId);
             return Result.success(variants);
         } catch (Exception e) {
             return Result.error("获取款式列表失败: " + e.getMessage());
@@ -171,9 +171,16 @@ public class BlindBoxMachineController {
 
     @GetMapping("/draw-records")
     @Operation(summary = "获取用户所有抽盒记录")
-    public Result<List<BlindBoxDrawRecord>> getUserDrawRecords(@RequestParam String userId) {
+    public Result<List<BlindBoxDrawRecord>> getUserDrawRecords(
+            @RequestParam String userId,
+            @RequestParam(required = false) String machineId) {
         try {
-            List<BlindBoxDrawRecord> records = blindBoxMachineService.getUserAllDrawRecords(userId);
+            List<BlindBoxDrawRecord> records;
+            if (machineId != null && !machineId.isEmpty()) {
+                records = blindBoxMachineService.getUserMachineDrawRecords(userId, machineId);
+            } else {
+                records = blindBoxMachineService.getUserAllDrawRecords(userId);
+            }
             return Result.success(records);
         } catch (Exception e) {
             return Result.error("获取抽盒记录失败: " + e.getMessage());
@@ -211,9 +218,6 @@ public class BlindBoxMachineController {
     public Result<BlindBoxMachine> createMachine(@RequestBody Map<String, Object> body) {
         try {
             BlindBoxMachine machine = new BlindBoxMachine();
-            if (body.get("saleSeriesId") != null) {
-                machine.setSaleSeriesId((String) body.get("saleSeriesId"));
-            }
             if (body.get("shopId") != null) {
                 machine.setShopId((String) body.get("shopId"));
             }
@@ -247,9 +251,6 @@ public class BlindBoxMachineController {
         try {
             BlindBoxMachine machine = new BlindBoxMachine();
             machine.setMachineId(machineId);
-            if (body.containsKey("saleSeriesId")) {
-                machine.setSaleSeriesId((String) body.get("saleSeriesId"));
-            }
             if (body.containsKey("machineName")) {
                 machine.setMachineName((String) body.get("machineName"));
             }

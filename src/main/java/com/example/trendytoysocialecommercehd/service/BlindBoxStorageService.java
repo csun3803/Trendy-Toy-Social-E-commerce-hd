@@ -22,10 +22,7 @@ public class BlindBoxStorageService {
     private BlindBoxMachineMapper blindBoxMachineMapper;
 
     @Autowired
-    private SaleVariantMapper saleVariantMapper;
-
-    @Autowired
-    private SaleSeriesMapper saleSeriesMapper;
+    private BlindBoxSlotMapper blindBoxSlotMapper;
 
     @Autowired
     private OrderMapper orderMapper;
@@ -34,13 +31,27 @@ public class BlindBoxStorageService {
     private OrderItemMapper orderItemMapper;
 
     /**
-     * 存入暂存柜（抽中后调用）
+     * 存入暂存柜（抽中后调用，独立模式：直接传入款式信息，不再查询 sale_variant）
      */
     public BlindBoxStorage storeToCabinet(String userId, String machineId, String setId,
-                                          Integer slotNo, String saleVariantId, Boolean isHidden,
+                                          Integer slotNo, String variantId, Boolean isHidden,
                                           BigDecimal drawPrice, String payOrderId) {
         BlindBoxMachine machine = blindBoxMachineMapper.selectById(machineId);
-        SaleVariant variant = saleVariantMapper.selectById(saleVariantId);
+
+        // 从 slot 缓存获取款式信息
+        String variantName = null;
+        String variantImage = null;
+        if (variantId != null && setId != null && slotNo != null) {
+            com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<BlindBoxSlot> slotWrapper =
+                    new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<>();
+            slotWrapper.eq(BlindBoxSlot::getSetId, setId)
+                       .eq(BlindBoxSlot::getSlotNo, slotNo);
+            BlindBoxSlot slot = blindBoxSlotMapper.selectOne(slotWrapper);
+            if (slot != null) {
+                variantName = slot.getVariantName();
+                variantImage = slot.getVariantImage();
+            }
+        }
 
         BlindBoxStorage storage = new BlindBoxStorage();
         storage.setStorageId(UUID.randomUUID().toString());
@@ -49,11 +60,9 @@ public class BlindBoxStorageService {
         storage.setMachineName(machine != null ? machine.getMachineName() : null);
         storage.setSetId(setId);
         storage.setSlotNo(slotNo);
-        storage.setSaleVariantId(saleVariantId);
-        storage.setVariantId(variant != null ? variant.getVariantId() : null);
-        storage.setVariantName(variant != null ? (variant.getCustomDescription() != null
-                ? variant.getCustomDescription() : variant.getSkuCode()) : null);
-        storage.setVariantImage(variant != null ? parseVariantImage(variant.getCustomImages()) : null);
+        storage.setVariantId(variantId);
+        storage.setVariantName(variantName);
+        storage.setVariantImage(variantImage);
         storage.setIsHidden(isHidden);
         storage.setDrawPrice(drawPrice);
         storage.setPayOrderId(payOrderId);
@@ -130,13 +139,6 @@ public class BlindBoxStorageService {
             if (item.getItemSellerId() == null || item.getItemSellerId().isEmpty()) {
                 BlindBoxMachine machine = blindBoxMachineMapper.selectById(storage.getMachineId());
                 String shopId = machine != null ? machine.getShopId() : null;
-                if (shopId == null) {
-                    SaleVariant variant = saleVariantMapper.selectById(storage.getSaleVariantId());
-                    if (variant != null && variant.getSaleSeriesId() != null) {
-                        SaleSeries series = saleSeriesMapper.selectById(variant.getSaleSeriesId());
-                        if (series != null) shopId = series.getShopId();
-                    }
-                }
                 if (shopId != null) {
                     item.setItemSellerId(shopId);
                     needUpdate = true;
@@ -191,16 +193,5 @@ public class BlindBoxStorageService {
             }
         }
         return orders;
-    }
-
-    /** 解析款式图片（取第一张） */
-    private String parseVariantImage(String customImages) {
-        if (customImages == null || customImages.isEmpty()) return null;
-        try {
-            String[] arr = customImages.split(",");
-            return arr.length > 0 ? arr[0].trim() : null;
-        } catch (Exception e) {
-            return customImages;
-        }
     }
 }

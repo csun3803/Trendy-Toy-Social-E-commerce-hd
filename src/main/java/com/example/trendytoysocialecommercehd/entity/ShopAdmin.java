@@ -1,6 +1,7 @@
 package com.example.trendytoysocialecommercehd.entity;
 
 import com.baomidou.mybatisplus.annotation.IdType;
+import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
 import lombok.Data;
@@ -21,4 +22,7 @@ public class ShopAdmin {
     private String auditNotes;
     private Date auditedAt;
     private Integer loginCount;
+
+    @TableField(exist = false)
+    private String shopName;
 }

@@ -10,18 +10,15 @@ import java.time.LocalDateTime;
 @Data
 @TableName("shop_certification_file")
 public class ShopCertificationFile {
-    @TableId(value = "file_id", type = IdType.INPUT)
-    private String fileId;
+    @TableId(type = IdType.AUTO)
+    private Long fileId;
 
     private String shopId;
-    private String fileType;
-    private String fileName;
-    private String filePath;
+    private String fileType; // business_license, id_card_front, id_card_back, brand_authorization, trademark_cert
     private String fileUrl;
+    private String fileName;
     private Long fileSize;
     private String fileFormat;
-    private LocalDateTime uploadedAt;
-    private String uploadedBy;
-    private String auditStatus;
-    private String auditNotes;
+    private LocalDateTime createdAt;
+    private LocalDateTime updatedAt;
 }

@@ -11,6 +11,8 @@ import com.example.trendytoysocialecommercehd.entity.MyDisplayCabinet;
 import com.example.trendytoysocialecommercehd.entity.Comment;
 import com.example.trendytoysocialecommercehd.entity.FollowRelationship;
 import com.example.trendytoysocialecommercehd.entity.SaleVariant;
+import com.example.trendytoysocialecommercehd.entity.Report;
+import com.example.trendytoysocialecommercehd.entity.AfterSale;
 import com.example.trendytoysocialecommercehd.mapper.UserMapper;
 import com.example.trendytoysocialecommercehd.mapper.ShopMapper;
 import com.example.trendytoysocialecommercehd.mapper.OrderMapper;
@@ -20,6 +22,8 @@ import com.example.trendytoysocialecommercehd.mapper.MyDisplayCabinetMapper;
 import com.example.trendytoysocialecommercehd.mapper.CommentMapper;
 import com.example.trendytoysocialecommercehd.mapper.FollowRelationshipMapper;
 import com.example.trendytoysocialecommercehd.mapper.SaleVariantMapper;
+import com.example.trendytoysocialecommercehd.mapper.ReportMapper;
+import com.example.trendytoysocialecommercehd.mapper.AfterSaleMapper;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
@@ -62,6 +66,12 @@ public class AdminDashboardController {
 
     @Autowired
     private SaleVariantMapper saleVariantMapper;
+
+    @Autowired
+    private ReportMapper reportMapper;
+
+    @Autowired
+    private AfterSaleMapper afterSaleMapper;
 
     @GetMapping
     public Result<AdminDashboardDTO> getDashboardData(
@@ -202,29 +212,7 @@ public class AdminDashboardController {
                 hotProducts.add(hotProduct);
             }
 
-            // 如果数据库中没有足够数据，使用补充数据
-            if (hotProducts.size() < 5) {
-                String[] mockProductNames = {
-                        "SKULLPANDA温度系列-放轻松",
-                        "Dimoo如果今天星期八-快乐洗澡",
-                        "HACIPUPU庆典系列-许愿星",
-                        "Molly幻想流浪记-自由女神",
-                        "Labubu精灵艺术-蒙娜丽莎"
-                };
-                int[] mockSalesCounts = {156, 132, 98, 86, 75};
-                int[] mockTotalSales = {12480, 9108, 6860, 6020, 5250};
 
-                for (int i = hotProducts.size(); i < 5; i++) {
-                    AdminDashboardDTO.HotProductItem hotProduct = new AdminDashboardDTO.HotProductItem();
-                    hotProduct.setRank(i + 1);
-                    hotProduct.setProductName(mockProductNames[i]);
-                    hotProduct.setProductImage("");
-                    hotProduct.setSalesCount(mockSalesCounts[i]);
-                    hotProduct.setTotalSales(new BigDecimal(mockTotalSales[i]));
-                    hotProducts.add(hotProduct);
-                }
-            }
-            dto.setHotProducts(hotProducts);
 
             // 4. 商家相关指标 - 从数据库获取
             List<AdminDashboardDTO.MetricItem> merchantMetrics = new ArrayList<>();
@@ -263,16 +251,6 @@ public class AdminDashboardController {
             metric4.setName("商家商品总数");
             metric4.setValue((int) totalProductCount);
             merchantMetrics.add(metric4);
-
-            // 平均商家销售额 - 从订单统计
-            BigDecimal averageShopSales = BigDecimal.ZERO;
-            if (shopCountResult > 0) {
-                averageShopSales = totalRevenue.divide(new BigDecimal(shopCountResult), 2, BigDecimal.ROUND_HALF_UP);
-            }
-            AdminDashboardDTO.MetricItem metric5 = new AdminDashboardDTO.MetricItem();
-            metric5.setName("平均商家销售额");
-            metric5.setValue("¥" + averageShopSales);
-            merchantMetrics.add(metric5);
 
             dto.setMerchantMetrics(merchantMetrics);
 
@@ -324,39 +302,45 @@ public class AdminDashboardController {
 
             dto.setUserContentMetrics(userContentMetrics);
 
-            // 6. 待审核事项
+            // 6. 待审核事项 - 全部从数据库实时统计
             List<AdminDashboardDTO.PendingTaskItem> pendingTasks = new ArrayList<>();
 
+            // 6.1 商家入驻申请待审核
             AdminDashboardDTO.PendingTaskItem task1 = new AdminDashboardDTO.PendingTaskItem();
             task1.setId(1);
             task1.setTitle("商家入驻申请待审核");
+            task1.setType("merchant");
             task1.setCount((int) pendingShopCount);
-            if (pendingShopCount > 0) {
-                task1.setType("warning");
-            }
             pendingTasks.add(task1);
 
+            // 6.2 社交活动待审核
             AdminDashboardDTO.PendingTaskItem task2 = new AdminDashboardDTO.PendingTaskItem();
             task2.setId(2);
             task2.setTitle("社交活动待审核");
+            task2.setType("activity");
             task2.setCount((int) pendingActivityCount);
-            if (pendingActivityCount > 0) {
-                task2.setType("warning");
-            }
             pendingTasks.add(task2);
 
+            // 6.3 售后申请待处理（after_sale_status = 'PENDING'）
+            QueryWrapper<AfterSale> pendingAfterSaleWrapper = new QueryWrapper<>();
+            pendingAfterSaleWrapper.eq("after_sale_status", "PENDING");
+            long pendingAfterSaleCount = afterSaleMapper.selectCount(pendingAfterSaleWrapper);
             AdminDashboardDTO.PendingTaskItem task3 = new AdminDashboardDTO.PendingTaskItem();
             task3.setId(3);
-            task3.setTitle("纠纷/投诉待处理");
-            task3.setCount(3);
-            task3.setType("warning");
+            task3.setTitle("售后申请待处理");
+            task3.setType("afterSale");
+            task3.setCount((int) pendingAfterSaleCount);
             pendingTasks.add(task3);
 
+            // 6.4 举报待处理（status = 'PENDING'）
+            QueryWrapper<Report> pendingReportWrapper = new QueryWrapper<>();
+            pendingReportWrapper.eq("status", "PENDING");
+            long pendingReportCount = reportMapper.selectCount(pendingReportWrapper);
             AdminDashboardDTO.PendingTaskItem task4 = new AdminDashboardDTO.PendingTaskItem();
             task4.setId(4);
-            task4.setTitle("商品举报待审核");
-            task4.setCount(8);
-            task4.setType("warning");
+            task4.setTitle("举报待处理");
+            task4.setType("report");
+            task4.setCount((int) pendingReportCount);
             pendingTasks.add(task4);
 
             dto.setPendingTasks(pendingTasks);

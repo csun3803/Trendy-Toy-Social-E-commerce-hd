@@ -30,6 +30,9 @@ public class AfterSaleInfoDTO {
     private String platformArbitrationReason;
     private LocalDateTime platformArbitrationTime;
     private String rejectReason;
+    private String evidenceImages;
+    private LocalDateTime returnDeadline;
+    private String afterSaleNo;
     private LocalDateTime auditTime;
     private LocalDateTime completeTime;
     private LocalDateTime createTime;

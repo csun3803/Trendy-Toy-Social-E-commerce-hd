@@ -5,8 +5,11 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.example.trendytoysocialecommercehd.dto.MerchantLoginDTO;
 import com.example.trendytoysocialecommercehd.dto.MerchantRegisterDTO;
+import com.example.trendytoysocialecommercehd.entity.Shop;
 import com.example.trendytoysocialecommercehd.entity.ShopAdmin;
 import com.example.trendytoysocialecommercehd.mapper.ShopAdminMapper;
+import com.example.trendytoysocialecommercehd.mapper.ShopMapper;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.stereotype.Service;
 
@@ -56,7 +59,7 @@ public class ShopAdminService extends ServiceImpl<ShopAdminMapper, ShopAdmin> {
         shopAdmin.setAdminId(mobile);
         shopAdmin.setPasswordHash(passwordEncoder.encode(password));
         shopAdmin.setIsActive(1);
-        shopAdmin.setAuditStatus("待审核");
+        shopAdmin.setAuditStatus("PENDING");
         shopAdmin.setLoginCount(0);
 
         this.save(shopAdmin);
@@ -79,7 +82,7 @@ public class ShopAdminService extends ServiceImpl<ShopAdminMapper, ShopAdmin> {
         shopAdmin.setAdminId(registerDTO.getUsername());
         shopAdmin.setPasswordHash(passwordEncoder.encode(registerDTO.getPassword()));
         shopAdmin.setIsActive(1);
-        shopAdmin.setAuditStatus("待审核");
+        shopAdmin.setAuditStatus("PENDING");
         shopAdmin.setLoginCount(0);
 
         this.save(shopAdmin);
@@ -89,6 +92,9 @@ public class ShopAdminService extends ServiceImpl<ShopAdminMapper, ShopAdmin> {
     public ShopAdmin getShopAdminById(String adminId) {
         return this.getById(adminId);
     }
+
+    @Autowired
+    private ShopMapper shopMapper;
 
     public Page<ShopAdmin> getShopAdminList(int page, int size, String auditStatus, String isActive) {
         Page<ShopAdmin> pageObj = new Page<>(page, size);
@@ -102,14 +108,26 @@ public class ShopAdminService extends ServiceImpl<ShopAdminMapper, ShopAdmin> {
         }
         wrapper.orderByDesc(ShopAdmin::getLastLoginTime);
 
-        return this.page(pageObj, wrapper);
+        Page<ShopAdmin> result = this.page(pageObj, wrapper);
+
+        // 填充 shopName（关联 shop 表）
+        for (ShopAdmin admin : result.getRecords()) {
+            if (admin.getShopId() != null && !admin.getShopId().isEmpty()) {
+                Shop shop = shopMapper.selectById(admin.getShopId());
+                if (shop != null) {
+                    admin.setShopName(shop.getShopName());
+                }
+            }
+        }
+
+        return result;
     }
 
     public void createShopAdmin(ShopAdmin shopAdmin) {
         shopAdmin.setPasswordHash(passwordEncoder.encode(shopAdmin.getPasswordHash()));
         shopAdmin.setIsActive(shopAdmin.getIsActive() != null ? shopAdmin.getIsActive() : 1);
         shopAdmin.setLoginCount(0);
-        shopAdmin.setAuditStatus("待审核");
+        shopAdmin.setAuditStatus("PENDING");
         this.save(shopAdmin);
     }
 
@@ -139,6 +157,30 @@ public class ShopAdminService extends ServiceImpl<ShopAdminMapper, ShopAdmin> {
             throw new RuntimeException("管理员不存在");
         }
         shopAdmin.setShopId(shopId);
+        this.updateById(shopAdmin);
+    }
+
+    /**
+     * 重置商家管理员密码为 123456
+     */
+    public void resetPassword(String adminId) {
+        ShopAdmin shopAdmin = this.getById(adminId);
+        if (shopAdmin == null) {
+            throw new RuntimeException("管理员不存在");
+        }
+        shopAdmin.setPasswordHash(passwordEncoder.encode("123456"));
+        this.updateById(shopAdmin);
+    }
+
+    /**
+     * 切换商家管理员启用/禁用状态
+     */
+    public void toggleStatus(String adminId, Integer isActive) {
+        ShopAdmin shopAdmin = this.getById(adminId);
+        if (shopAdmin == null) {
+            throw new RuntimeException("管理员不存在");
+        }
+        shopAdmin.setIsActive(isActive);
         this.updateById(shopAdmin);
     }
 }

@@ -1,6 +1,7 @@
 package com.example.trendytoysocialecommercehd.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.example.trendytoysocialecommercehd.dto.SaleVariantDTO;
 import com.example.trendytoysocialecommercehd.entity.SaleVariant;
@@ -57,6 +58,44 @@ public class SaleVariantServiceImpl extends ServiceImpl<SaleVariantMapper, SaleV
     @Transactional(rollbackFor = Exception.class)
     public int deleteBySaleSeriesId(String saleSeriesId) {
         return baseMapper.deleteBySaleSeriesId(saleSeriesId);
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public boolean batchUpdateStatus(List<String> ids, String saleStatus) {
+        for (String id : ids) {
+            SaleVariant variant = new SaleVariant();
+            variant.setSaleVariantId(id);
+            variant.setSaleStatus(saleStatus);
+            if (!this.updateById(variant)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    @Override
+    public Page<SaleVariantDTO> searchVariantsWithNames(String keyword, int page, int size) {
+        // 先通过product表按关键字搜索，获取匹配的variantId列表
+        List<String> matchedVariantIds = productMapper.searchProductIdsByKeyword(keyword);
+
+        Page<SaleVariant> pageObj = new Page<>(page, size);
+        LambdaQueryWrapper<SaleVariant> wrapper = new LambdaQueryWrapper<>();
+
+        if (keyword != null && !keyword.trim().isEmpty()) {
+            if (matchedVariantIds.isEmpty()) {
+                // 没有匹配结果，返回空页
+                return new Page<>(page, size);
+            }
+            wrapper.in(SaleVariant::getVariantId, matchedVariantIds);
+        }
+        wrapper.eq(SaleVariant::getSaleStatus, "ON_SALE");
+        wrapper.orderByDesc(SaleVariant::getCreatedAt);
+
+        Page<SaleVariant> result = this.page(pageObj, wrapper);
+        Page<SaleVariantDTO> dtoPage = new Page<>(result.getCurrent(), result.getSize(), result.getTotal());
+        dtoPage.setRecords(result.getRecords().stream().map(this::convertToDTO).collect(Collectors.toList()));
+        return dtoPage;
     }
 
     private SaleVariantDTO convertToDTO(SaleVariant saleVariant) {
